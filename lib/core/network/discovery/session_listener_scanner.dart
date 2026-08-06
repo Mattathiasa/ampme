@@ -3,14 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/session_beacon.dart';
+import 'discovered_session.dart';
 import 'session_broadcaster.dart' show discoveryPort;
 
-class DiscoveredSession {
-  DiscoveredSession({required this.beacon, required this.lastSeenAt});
-
-  final SessionBeacon beacon;
-  final DateTime lastSeenAt;
-}
+export 'discovered_session.dart';
 
 const Duration _staleAfter = Duration(seconds: 5);
 const Duration _sweepInterval = Duration(seconds: 1);

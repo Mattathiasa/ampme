@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'features/home/home_screen.dart';
+import 'theme/app_theme.dart';
 
 class AmpmeApp extends StatelessWidget {
   const AmpmeApp({super.key});
@@ -9,12 +10,10 @@ class AmpmeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Ampme',
-      theme: ThemeData(colorSchemeSeed: Colors.deepPurple, useMaterial3: true),
-      darkTheme: ThemeData(
-        colorSchemeSeed: Colors.deepPurple,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.dark(),
+      darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.dark,
       home: const HomeScreen(),
     );
   }

@@ -24,8 +24,15 @@ class ControlClient {
 
   final _estimator = ClockSyncEstimator();
   final _messageController = StreamController<ControlMessage>.broadcast();
+  final _disconnectedController = StreamController<void>.broadcast();
+  bool _disconnectedEmitted = false;
 
   Stream<ControlMessage> get messages => _messageController.stream;
+
+  /// Fires once when the underlying WebSocket closes (host went away or the
+  /// network dropped), so the session controller can surface "host left".
+  Stream<void> get disconnected => _disconnectedController.stream;
+
   ClockSyncEstimate? get clockEstimate => _estimator.currentEstimate;
 
   Future<void> connect({required String hostIp, required int controlPort}) async {
@@ -33,7 +40,12 @@ class ControlClient {
     final uri = Uri.parse('ws://$hostIp:$controlPort/control');
     final channel = WebSocketChannel.connect(uri);
     _channel = channel;
-    _subscription = channel.stream.listen(_handleData, cancelOnError: false);
+    _subscription = channel.stream.listen(
+      _handleData,
+      onDone: _handleClosed,
+      onError: (_) => _handleClosed(),
+      cancelOnError: false,
+    );
     _syncBurstRemaining = _syncBurstCount;
     _sendSyncRequest();
     _scheduleNextSync(_syncBurstInterval);
@@ -59,6 +71,12 @@ class ControlClient {
 
     if (_messageController.isClosed) return;
     _messageController.add(message);
+  }
+
+  void _handleClosed() {
+    if (_disconnectedEmitted || _disconnectedController.isClosed) return;
+    _disconnectedEmitted = true;
+    _disconnectedController.add(null);
   }
 
   void _scheduleNextSync(Duration delay) {
@@ -96,5 +114,6 @@ class ControlClient {
   Future<void> dispose() async {
     await disconnect();
     await _messageController.close();
+    await _disconnectedController.close();
   }
 }

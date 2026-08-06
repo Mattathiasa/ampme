@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:mime/mime.dart';
 
@@ -97,18 +99,67 @@ RangeSpec? parseRangeHeader(String? headerValue, int totalLength) {
   return RangeSpec(start: start, end: end);
 }
 
+/// Builds a 44-byte WAV/RIFF header for a **live** (unbounded) PCM stream.
+///
+/// The RIFF and `data` chunk sizes are set to `0xFFFFFFFF` — the standard
+/// convention for a stream whose length isn't known up front — so a
+/// listening player keeps reading until the connection closes instead of
+/// stopping at a declared length.
+Uint8List wavStreamHeader({
+  required int sampleRate,
+  required int channels,
+  int bitsPerSample = 16,
+}) {
+  final byteRate = sampleRate * channels * (bitsPerSample ~/ 8);
+  final blockAlign = channels * (bitsPerSample ~/ 8);
+  final bytes = BytesBuilder();
+
+  void ascii(String s) => bytes.add(s.codeUnits);
+  void u32(int v) {
+    final b = ByteData(4)..setUint32(0, v, Endian.little);
+    bytes.add(b.buffer.asUint8List());
+  }
+
+  void u16(int v) {
+    final b = ByteData(2)..setUint16(0, v, Endian.little);
+    bytes.add(b.buffer.asUint8List());
+  }
+
+  ascii('RIFF');
+  u32(0xFFFFFFFF); // chunk size — unknown/streaming
+  ascii('WAVE');
+  ascii('fmt ');
+  u32(16); // PCM fmt chunk size
+  u16(1); // audioFormat = PCM
+  u16(channels);
+  u32(sampleRate);
+  u32(byteRate);
+  u16(blockAlign);
+  u16(bitsPerSample);
+  ascii('data');
+  u32(0xFFFFFFFF); // data size — unknown/streaming
+  return bytes.toBytes();
+}
+
 /// Host-side HTTP server: serves the currently selected audio file's bytes
 /// (with `Range` support so `just_audio`/ExoPlayer can seek and buffer on
-/// listener devices) and hands off WebSocket upgrade requests on
+/// listener devices), streams a live microphone/broadcast source at
+/// `/live/<trackId>`, and hands off WebSocket upgrade requests on
 /// `/control` to [onWebSocketConnected].
 ///
-/// Owns a single [HttpServer] bound to an OS-assigned port so both routes
+/// Owns a single [HttpServer] bound to an OS-assigned port so all routes
 /// share one listening socket, avoiding a fixed-port collision risk.
 class AudioHttpServer {
   HttpServer? _server;
   File? _currentFile;
   String? _currentTrackId;
   void Function(WebSocket socket)? onWebSocketConnected;
+
+  // Live broadcast state (mic / captured audio). Null when not broadcasting.
+  Stream<List<int>>? _livePcm;
+  String? _liveTrackId;
+  int _liveSampleRate = 44100;
+  int _liveChannels = 1;
 
   int? get port => _server?.port;
 
@@ -128,6 +179,26 @@ class AudioHttpServer {
     _currentFile = file;
   }
 
+  /// Points `/live/<trackId>` at a live PCM feed (e.g. the microphone). Each
+  /// listener that connects gets a WAV header followed by the shared [pcm]
+  /// broadcast stream.
+  void setLiveSource({
+    required String trackId,
+    required Stream<List<int>> pcm,
+    required int sampleRate,
+    required int channels,
+  }) {
+    _liveTrackId = trackId;
+    _livePcm = pcm;
+    _liveSampleRate = sampleRate;
+    _liveChannels = channels;
+  }
+
+  void clearLiveSource() {
+    _liveTrackId = null;
+    _livePcm = null;
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     if (WebSocketTransformer.isUpgradeRequest(request) &&
         request.uri.path == '/control') {
@@ -141,9 +212,76 @@ class AudioHttpServer {
       await _serveAudio(request, trackId: segments[1]);
       return;
     }
+    if (request.method == 'GET' && segments.length == 2 && segments[0] == 'live') {
+      await _serveLive(request, trackId: segments[1]);
+      return;
+    }
 
     request.response.statusCode = HttpStatus.notFound;
     await request.response.close();
+  }
+
+  /// Streams the live PCM source as an open-ended WAV response. Sends the
+  /// header, then forwards mic chunks until either the source stops (host
+  /// ends the broadcast) or the client disconnects.
+  Future<void> _serveLive(HttpRequest request, {required String trackId}) async {
+    final pcm = _livePcm;
+    if (pcm == null || _liveTrackId != trackId) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+
+    final response = request.response;
+    response.statusCode = HttpStatus.ok;
+    response.headers
+      ..set(HttpHeaders.contentTypeHeader, 'audio/wav')
+      ..set(HttpHeaders.cacheControlHeader, 'no-cache, no-store')
+      // Length is unknown; Dart uses chunked transfer encoding, which
+      // ExoPlayer/just_audio consume as a non-seekable live source.
+      ..removeAll(HttpHeaders.contentLengthHeader);
+
+    response.add(wavStreamHeader(
+      sampleRate: _liveSampleRate,
+      channels: _liveChannels,
+    ));
+
+    final completer = Completer<void>();
+    final sub = pcm.listen(
+      (chunk) {
+        try {
+          response.add(chunk);
+        } catch (_) {
+          // Client went away between chunks; unwind below.
+          if (!completer.isCompleted) completer.complete();
+        }
+      },
+      onError: (_) {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      cancelOnError: false,
+    );
+
+    // Also unwind if the socket closes from the client side.
+    unawaited(response.done.then(
+      (_) {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (_) {
+        if (!completer.isCompleted) completer.complete();
+      },
+    ));
+
+    await completer.future;
+    await sub.cancel();
+    try {
+      await response.close();
+    } catch (_) {
+      // Socket already gone.
+    }
   }
 
   Future<void> _serveAudio(HttpRequest request, {required String trackId}) async {
@@ -195,5 +333,6 @@ class AudioHttpServer {
     _server = null;
     _currentFile = null;
     _currentTrackId = null;
+    clearLiveSource();
   }
 }

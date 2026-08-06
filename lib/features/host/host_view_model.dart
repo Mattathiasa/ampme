@@ -28,7 +28,10 @@ class HostViewModel extends ChangeNotifier {
 
   bool isStarting = false;
   bool isPickingFile = false;
+  bool isTogglingLive = false;
   String? errorMessage;
+
+  bool get isLiveBroadcasting => hostController.isLiveBroadcasting;
 
   Future<void> startSession(String sessionName) async {
     isStarting = true;
@@ -64,6 +67,30 @@ class HostViewModel extends ChangeNotifier {
       errorMessage = 'Failed to load track: $e';
     } finally {
       isPickingFile = false;
+      notifyListeners();
+    }
+  }
+
+  /// Starts/stops the live "amplify the room" microphone broadcast.
+  Future<void> toggleLiveBroadcast() async {
+    isTogglingLive = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      if (hostController.isLiveBroadcasting) {
+        await hostController.stopLiveBroadcast();
+      } else {
+        final granted = await AppPermissions.requestMicrophoneAccess();
+        if (!granted) {
+          errorMessage = 'Microphone access is required to broadcast live audio.';
+          return;
+        }
+        await hostController.startLiveBroadcast();
+      }
+    } catch (e) {
+      errorMessage = 'Live broadcast failed: $e';
+    } finally {
+      isTogglingLive = false;
       notifyListeners();
     }
   }

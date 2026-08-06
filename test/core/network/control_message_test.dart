@@ -118,6 +118,10 @@ void main() {
       );
     });
 
+    test('sessionEnded', () {
+      expectRoundTrip(ControlMessage.sessionEnded(senderId: 'host-1'));
+    });
+
     test('decode throws for an unknown message type rather than silently accepting it', () {
       expect(
         () => ControlMessage.decode('{"type":"bogus","senderId":"x","payload":{}}'),

@@ -12,7 +12,8 @@ enum ControlMessageType {
   volume,
   clockSyncRequest,
   clockSyncResponse,
-  listenerStatusUpdate;
+  listenerStatusUpdate,
+  sessionEnded;
 
   String toJsonValue() => name;
 
@@ -174,6 +175,16 @@ class ControlMessage {
       type: ControlMessageType.clockSyncResponse,
       senderId: senderId,
       payload: {'clientSendTimeMs': clientSendTimeMs, 'hostTimeMs': hostTimeMs},
+    );
+  }
+
+  /// Host tells listeners the session is shutting down so they can cleanly
+  /// leave (rather than only inferring it from the socket dropping).
+  factory ControlMessage.sessionEnded({required String senderId}) {
+    return ControlMessage(
+      type: ControlMessageType.sessionEnded,
+      senderId: senderId,
+      payload: const {},
     );
   }
 

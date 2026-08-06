@@ -1,5 +1,5 @@
 name: ampme
-description: "A new Flutter project."
+description: "Play a song on one device and keep every phone on the same WiFi in sync."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -37,10 +37,20 @@ dependencies:
   just_audio: ^0.10.6
   web_socket_channel: ^3.0.3
   file_picker: ^11.0.3
-  permission_handler: ^13.0.0
+  # 13.x pulls permission_handler_android 14, which requires compileSdk 37
+  # (Android SDK "37.0", only resolvable by AGP 9 — unsupported by this
+  # Flutter). 12.x's Android impl targets compileSdk 35; the Dart permission
+  # API we use (audio, nearbyWifiDevices) is identical.
+  permission_handler: ^12.0.0
   provider: ^6.1.5+1
   uuid: ^4.6.0
   mime: ^2.0.0
+  qr_flutter: ^4.1.0
+  just_audio_background: ^0.0.1-beta.17
+  # QR scanning to join a session by pointing the camera at the host's code.
+  mobile_scanner: ^5.2.3
+  # Microphone PCM capture for the "amplify the room" live broadcast (host).
+  record: ^5.1.2
 
 dev_dependencies:
   flutter_test:

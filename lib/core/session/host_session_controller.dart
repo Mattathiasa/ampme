@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../audio/audio_engine.dart';
 import '../audio/just_audio_engine.dart';
+import '../audio/live_mic_broadcaster.dart';
 import '../network/audio_http_server.dart';
 import '../network/control_server.dart';
 import '../network/discovery/session_broadcaster.dart';
@@ -38,6 +39,7 @@ class HostSessionController extends ChangeNotifier {
   final _httpServer = AudioHttpServer();
   final _controlServer = ControlServer();
   final _broadcaster = SessionBroadcaster();
+  final _micBroadcaster = LiveMicBroadcaster();
   final _knownListeners = <String>{};
 
   final String sessionId = generateId();
@@ -45,7 +47,17 @@ class HostSessionController extends ChangeNotifier {
   TrackInfo? currentTrack;
   PlaybackState playbackState = PlaybackState.stopped;
   Duration position = Duration.zero;
+  double volume = 1.0;
   String? localIp;
+
+  /// The code a listener types to join this session (host IP + port). Null
+  /// until the server is started and the local IP is known.
+  String? get joinCode {
+    final ip = localIp;
+    final port = _httpServer.port;
+    if (ip == null || port == null) return null;
+    return '$ip:$port';
+  }
 
   final _listenerStatuses = <String, ListenerStatus>{};
   Map<String, ListenerStatus> get listenerStatuses => Map.unmodifiable(_listenerStatuses);
@@ -63,7 +75,11 @@ class HostSessionController extends ChangeNotifier {
     _incomingSub = _controlServer.incoming.listen(_handleIncoming);
     _disconnectSub = _controlServer.disconnections.listen(_handleDisconnect);
     _positionSub = audioEngine.positionStream.listen((pos) {
+      // Only rebuild when the visible (whole second) value changes, so the
+      // host's transport slider advances live without excessive rebuilds.
+      final changedSecond = pos.inSeconds != position.inSeconds;
       position = pos;
+      if (changedSecond) notifyListeners();
     });
     _stateSub = audioEngine.stateStream.listen((state) {
       playbackState = state;
@@ -84,10 +100,17 @@ class HostSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether the host is currently broadcasting live microphone audio
+  /// ("amplify the room") rather than a picked file.
+  bool get isLiveBroadcasting => _micBroadcaster.isBroadcasting;
+
   Future<void> loadTrack(File file, {required String fileName}) async {
+    // A file and a live broadcast are mutually exclusive sources.
+    if (_micBroadcaster.isBroadcasting) await stopLiveBroadcast();
+
     final trackId = generateId();
     _httpServer.setCurrentTrack(trackId: trackId, file: file);
-    final duration = await audioEngine.loadLocalFile(file.path);
+    final duration = await audioEngine.loadLocalFile(file.path, title: fileName);
     position = Duration.zero;
 
     final ip = localIp ?? await getLocalWifiIp();
@@ -151,9 +174,75 @@ class HostSessionController extends ChangeNotifier {
     );
   }
 
-  Future<void> setVolume(double volume) async {
-    await audioEngine.setVolume(volume);
-    _controlServer.broadcast(ControlMessage.volume(senderId: hostDevice.deviceId, volume: volume));
+  Future<void> setVolume(double newVolume) async {
+    volume = newVolume;
+    await audioEngine.setVolume(newVolume);
+    _controlServer.broadcast(
+      ControlMessage.volume(senderId: hostDevice.deviceId, volume: newVolume),
+    );
+    notifyListeners();
+  }
+
+  /// Starts capturing the host microphone and broadcasting it live to
+  /// listeners ("amplify the room"). The host doesn't play this back itself
+  /// (it's the source — playing would feed back), so listeners hear it while
+  /// the host's own [audioEngine] stays idle.
+  Future<void> startLiveBroadcast() async {
+    if (_micBroadcaster.isBroadcasting) return;
+
+    // Stop any file playback so the two sources don't overlap.
+    await audioEngine.pause();
+    await _micBroadcaster.start();
+
+    final trackId = generateId();
+    _httpServer.setLiveSource(
+      trackId: trackId,
+      pcm: _micBroadcaster.pcmStream,
+      sampleRate: LiveMicBroadcaster.sampleRate,
+      channels: LiveMicBroadcaster.channels,
+    );
+
+    final ip = localIp ?? await getLocalWifiIp();
+    final streamUrl = 'http://$ip:${_httpServer.port}/live/$trackId';
+    currentTrack = TrackInfo(
+      trackId: trackId,
+      fileName: 'Live audio',
+      streamUrl: streamUrl,
+      durationMs: 0,
+      isLive: true,
+    );
+    position = Duration.zero;
+    playbackState = PlaybackState.playing;
+
+    _controlServer.broadcast(
+      ControlMessage.trackChanged(senderId: hostDevice.deviceId, track: currentTrack!),
+    );
+    notifyListeners();
+  }
+
+  /// Ends the live broadcast, tells listeners to stop, and returns the
+  /// session to "no track selected".
+  Future<void> stopLiveBroadcast() async {
+    if (!_micBroadcaster.isBroadcasting) return;
+    final endedTrack = currentTrack;
+
+    await _micBroadcaster.stop();
+    _httpServer.clearLiveSource();
+
+    if (endedTrack != null) {
+      _controlServer.broadcast(
+        ControlMessage.pause(
+          senderId: hostDevice.deviceId,
+          trackId: endedTrack.trackId,
+          positionMs: 0,
+          hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+    }
+
+    currentTrack = null;
+    playbackState = PlaybackState.stopped;
+    notifyListeners();
   }
 
   void _handleIncoming(IncomingControlMessage incoming) {
@@ -211,6 +300,11 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    // Tell listeners the session is ending before we tear the sockets down,
+    // so they leave cleanly instead of only inferring it from the drop.
+    if (_knownListeners.isNotEmpty) {
+      _controlServer.broadcast(ControlMessage.sessionEnded(senderId: hostDevice.deviceId));
+    }
     await _incomingSub?.cancel();
     await _disconnectSub?.cancel();
     await _positionSub?.cancel();
@@ -228,6 +322,7 @@ class HostSessionController extends ChangeNotifier {
 
   Future<void> _disposeAsync() async {
     await stop();
+    await _micBroadcaster.dispose();
     await audioEngine.dispose();
   }
 }
