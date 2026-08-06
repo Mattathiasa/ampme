@@ -13,12 +13,14 @@ import '../network/models/playback_state.dart';
 /// detail of [JustAudioEngine].
 abstract class AudioEngine {
   /// Loads a local file for playback (host role). Returns the track
-  /// duration once known.
-  Future<Duration?> loadLocalFile(String path);
+  /// duration once known. [title] labels the background/lock-screen media
+  /// notification.
+  Future<Duration?> loadLocalFile(String path, {required String title});
 
   /// Loads a remote stream for playback (listener role: the host's
   /// `/stream/<trackId>` URL). Returns the track duration once known.
-  Future<Duration?> loadUrl(Uri uri);
+  /// [title] labels the background/lock-screen media notification.
+  Future<Duration?> loadUrl(Uri uri, {required String title});
 
   Future<void> play();
 

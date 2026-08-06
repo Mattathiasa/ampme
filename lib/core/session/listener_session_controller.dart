@@ -28,6 +28,7 @@ class ListenerSessionController extends ChangeNotifier {
   StreamSubscription? _messagesSub;
   StreamSubscription? _positionSub;
   StreamSubscription? _stateSub;
+  StreamSubscription? _disconnectedSub;
   Timer? _statusTimer;
 
   String? sessionName;
@@ -38,18 +39,48 @@ class ListenerSessionController extends ChangeNotifier {
   int? clockOffsetMs;
   int? roundTripMs;
 
+  /// This device's own playback volume (0..1). Each listener controls its own
+  /// output, so the host's playback isn't a single master volume.
+  double volume = 1.0;
+
+  /// Set once the host ends the session or the connection drops; the UI uses
+  /// this to show "host left" and return to discovery.
+  bool hostLeft = false;
+
+  /// Sets this device's local playback volume without affecting other devices.
+  Future<void> setLocalVolume(double value) async {
+    volume = value;
+    await audioEngine.setVolume(value);
+    notifyListeners();
+  }
+
   Future<void> connect({required String hostIp, required int controlPort}) async {
     final client = ControlClient(deviceId: selfDevice.deviceId);
     _client = client;
     await client.connect(hostIp: hostIp, controlPort: controlPort);
 
     _messagesSub = client.messages.listen(_handleMessage);
-    _positionSub = audioEngine.positionStream.listen((pos) => position = pos);
+    _positionSub = audioEngine.positionStream.listen((pos) {
+      // just_audio emits ~4x/sec; only rebuild when the visible (whole
+      // second) value changes to keep the transport slider live without
+      // churning the widget tree.
+      final changedSecond = pos.inSeconds != position.inSeconds;
+      position = pos;
+      if (changedSecond) notifyListeners();
+    });
     _stateSub = audioEngine.stateStream.listen((state) {
       playbackState = state;
       notifyListeners();
     });
+    _disconnectedSub = client.disconnected.listen((_) => _handleHostGone());
     _statusTimer = Timer.periodic(_statusReportInterval, (_) => _sendStatus());
+  }
+
+  void _handleHostGone() {
+    if (hostLeft) return;
+    hostLeft = true;
+    audioEngine.pause();
+    notifyListeners();
   }
 
   void _handleMessage(ControlMessage message) {
@@ -73,7 +104,11 @@ class ListenerSessionController extends ChangeNotifier {
       case ControlMessageType.pause:
         audioEngine.pause();
       case ControlMessageType.volume:
-        audioEngine.setVolume((message.payload['volume'] as num).toDouble());
+        // Volume is per-device: each listener controls its own output via
+        // setLocalVolume, so the host's volume changes don't override it here.
+        break;
+      case ControlMessageType.sessionEnded:
+        _handleHostGone();
       case ControlMessageType.clockSyncRequest:
       case ControlMessageType.clockSyncResponse:
       case ControlMessageType.listenerStatusUpdate:
@@ -84,7 +119,14 @@ class ListenerSessionController extends ChangeNotifier {
   Future<void> _loadCurrentTrack() async {
     final track = currentTrack;
     if (track == null) return;
-    await audioEngine.loadUrl(Uri.parse(track.streamUrl));
+    await audioEngine.loadUrl(Uri.parse(track.streamUrl), title: track.fileName);
+    if (track.isLive) {
+      // A live broadcast has no scheduled start instant — it's always "now",
+      // so begin playing as soon as it's loaded.
+      playbackState = PlaybackState.playing;
+      await audioEngine.play();
+      notifyListeners();
+    }
   }
 
   void _handleScheduledStart(ControlMessage message) {
@@ -121,6 +163,7 @@ class ListenerSessionController extends ChangeNotifier {
     await _messagesSub?.cancel();
     await _positionSub?.cancel();
     await _stateSub?.cancel();
+    await _disconnectedSub?.cancel();
     await _client?.dispose();
     _client = null;
   }

@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.ampme.ampme"
-    compileSdk = flutter.compileSdkVersion
+    // All native plugins target compileSdk 35; pin at least that regardless of
+    // the Flutter default so audio_session/just_audio resolve cleanly.
+    compileSdk = maxOf(35, flutter.compileSdkVersion)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

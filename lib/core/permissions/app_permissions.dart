@@ -21,4 +21,17 @@ class AppPermissions {
     // denied — local sockets work regardless, so treat that as success.
     return status.isGranted || status.isLimited;
   }
+
+  /// Camera access, so a listener can scan the host's join QR code.
+  static Future<bool> requestCameraAccess() async {
+    final status = await Permission.camera.request();
+    return status.isGranted;
+  }
+
+  /// Microphone access, so a host can capture and broadcast live audio
+  /// ("amplify the room").
+  static Future<bool> requestMicrophoneAccess() async {
+    final status = await Permission.microphone.request();
+    return status.isGranted;
+  }
 }
