@@ -63,3 +63,59 @@ HostAddress? _build(String host, String portStr) {
   }
   return HostAddress(host: trimmedHost, port: port);
 }
+
+/// A parsed address of a browser-hosted (web) session: the LAN relay's
+/// address plus the session code it rendezvouses on.
+class WebSessionAddress {
+  const WebSessionAddress({
+    required this.relayHost,
+    required this.relayPort,
+    required this.code,
+  });
+
+  final String relayHost;
+  final int relayPort;
+  final String code;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WebSessionAddress &&
+      other.relayHost == relayHost &&
+      other.relayPort == relayPort &&
+      other.code == code;
+
+  @override
+  int get hashCode => Object.hash(relayHost, relayPort, code);
+
+  @override
+  String toString() => '$relayHost:$relayPort/$code';
+}
+
+/// Parses the join code of a web-hosted session into a [WebSessionAddress],
+/// or returns `null` if it isn't one. A web code has a session token after a
+/// `/` in the authority — e.g. `192.168.1.10:8080/AMP-4821`,
+/// `http://192.168.1.10:8080/AMP-4821`, or `ws://.../AMP-4821`.
+///
+/// Plain `host:port` codes (native sessions) are NOT matched; callers should
+/// try this first and fall back to [parseJoinCode].
+WebSessionAddress? parseWebSessionCode(String input) {
+  final raw = input.trim();
+  if (raw.isEmpty) return null;
+
+  final uri = Uri.tryParse(raw.contains('://') ? raw : 'http://$raw');
+  if (uri == null || uri.host.isEmpty || !uri.hasPort) return null;
+
+  // The session token is the first non-empty path segment.
+  final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (segments.isEmpty) return null;
+  final code = segments.first.trim();
+  if (code.isEmpty) return null;
+
+  final port = uri.port;
+  if (port < 1 || port > 65535) return null;
+  return WebSessionAddress(
+    relayHost: uri.host,
+    relayPort: port,
+    code: code,
+  );
+}

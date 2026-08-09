@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Ampme's brand palette and Material 3 theme.
+/// Ampme's brand palette and Material 3 themes.
 ///
-/// The app is dark-first: a deep aubergine/plum canvas with **dark purple**
-/// as the primary brand colour and **sage green** as the accent, so the two
-/// read as "nightlife audio" without fighting each other. Centralised here so
-/// every screen shares the same colours, shapes, and component styling.
+/// The app ships both a **dark** theme (deep aubergine/plum canvas with dark
+/// purple primary and sage accent — "nightlife audio") and a **light** theme
+/// that mirrors the same brand on a soft lavender-white canvas. Centralised
+/// here so every screen shares the same colours, shapes, and component
+/// styling, and `MaterialApp` picks one via `ThemeMode.system`.
 class AppTheme {
   const AppTheme._();
 
@@ -27,9 +28,140 @@ class AppTheme {
   static const Color _surfaceContainerHigh = Color(0xFF2E2447);
   static const Color _outline = Color(0xFF473A63);
 
-  /// The app deliberately ships a single dark theme; [light] returns the same
-  /// so `MaterialApp` has a value if the platform requests light mode.
-  static ThemeData light() => dark();
+  // ---- Light canvas (soft lavender-white) ----
+  static const Color _lightBg = Color(0xFFF7F5FB);
+  static const Color _lightSurface = Color(0xFFF0ECF8);
+  static const Color _lightSurfaceContainerHigh = Color(0xFFEAE5F3);
+  static const Color _lightOutline = Color(0xFFCBC4E2);
+  static const Color _sageDark = Color(0xFF5B7249);
+
+  static ThemeData light() {
+    const scheme = ColorScheme(
+      brightness: Brightness.light,
+      primary: purple,
+      onPrimary: Colors.white,
+      primaryContainer: Color(0xFFE7DEFF),
+      onPrimaryContainer: Color(0xFF2A1A55),
+      secondary: _sageDark,
+      onSecondary: Colors.white,
+      secondaryContainer: Color(0xFFDCEBCF),
+      onSecondaryContainer: Color(0xFF1A2E10),
+      tertiary: Color(0xFF44663C),
+      onTertiary: Colors.white,
+      tertiaryContainer: Color(0xFFC5EAB8),
+      onTertiaryContainer: Color(0xFF0C1F08),
+      error: Color(0xFFBA1A1A),
+      onError: Colors.white,
+      errorContainer: Color(0xFFFFDAD6),
+      onErrorContainer: Color(0xFF410002),
+      surface: _lightSurface,
+      onSurface: Color(0xFF1C1630),
+      onSurfaceVariant: Color(0xFF5E5678),
+      surfaceContainerLowest: _lightBg,
+      surfaceContainerLow: _lightSurface,
+      surfaceContainer: _lightSurface,
+      surfaceContainerHigh: _lightSurfaceContainerHigh,
+      surfaceContainerHighest: _lightSurfaceContainerHigh,
+      outline: Color(0xFF7A7398),
+      outlineVariant: _lightOutline,
+      inverseSurface: Color(0xFF322B49),
+      onInverseSurface: Color(0xFFF0EAFE),
+      inversePrimary: Color(0xFFCDBBFF),
+      shadow: Colors.black,
+      scrim: Colors.black,
+    );
+
+    final base = ThemeData(useMaterial3: true, colorScheme: scheme);
+
+    return base.copyWith(
+      scaffoldBackgroundColor: _lightBg,
+      textTheme: base.textTheme.apply(
+        bodyColor: scheme.onSurface,
+        displayColor: scheme.onSurface,
+      ),
+      appBarTheme: const AppBarTheme(
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: Color(0xFF1C1630),
+        elevation: 0,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
+        titleTextStyle: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
+          color: Color(0xFF1C1630),
+        ),
+      ),
+      cardTheme: CardThemeData(
+        elevation: 0,
+        clipBehavior: Clip.antiAlias,
+        color: _lightSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(color: _lightOutline.withValues(alpha: 0.8)),
+        ),
+        margin: EdgeInsets.zero,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(54),
+          backgroundColor: purple,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.2),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(54),
+          foregroundColor: _sageDark,
+          side: BorderSide(color: _sageDark.withValues(alpha: 0.5), width: 1.5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.2),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: _sageDark),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(foregroundColor: scheme.onSurface),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: _lightSurfaceContainerHigh,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: _lightOutline),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: purpleBright, width: 2),
+        ),
+        labelStyle: const TextStyle(color: Color(0xFF5E5678)),
+        floatingLabelStyle: const TextStyle(color: purple),
+      ),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: purpleBright,
+        inactiveTrackColor: _lightOutline,
+        thumbColor: purpleBright,
+        overlayColor: purpleBright.withValues(alpha: 0.16),
+      ),
+      dividerTheme: DividerThemeData(color: _lightOutline.withValues(alpha: 0.7), thickness: 1),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: _surfaceContainerHigh,
+        contentTextStyle: const TextStyle(color: Color(0xFFEDE8F7)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      listTileTheme: const ListTileThemeData(iconColor: _sageDark),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(color: purpleBright),
+    );
+  }
 
   static ThemeData dark() {
     const scheme = ColorScheme(
@@ -160,15 +292,22 @@ class AppTheme {
   }
 
   /// A soft brand gradient used behind hero/header areas — plum fading down
-  /// into the canvas with a whisper of sage at the edge.
-  static LinearGradient heroGradient(ColorScheme scheme) => const LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [
-      Color(0xFF2A1E4A),
-      _bg,
-      Color(0xFF17221A),
-    ],
-    stops: [0.0, 0.55, 1.0],
-  );
+  /// into the canvas with a whisper of sage at the edge (dark), or a pale
+  /// lavender-to-mint wash (light).
+  static LinearGradient heroGradient(ColorScheme scheme) {
+    if (scheme.brightness == Brightness.light) {
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFE3DBF7), _lightBg, Color(0xFFE8EFE3)],
+        stops: [0.0, 0.55, 1.0],
+      );
+    }
+    return const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF2A1E4A), _bg, Color(0xFF17221A)],
+      stops: [0.0, 0.55, 1.0],
+    );
+  }
 }

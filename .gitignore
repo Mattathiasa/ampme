@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# The universal APK (101 MB) exceeds GitHub's 100 MB repo file limit.
+# It is attached to GitHub Releases instead (2 GB asset limit).
+release/ampme.apk

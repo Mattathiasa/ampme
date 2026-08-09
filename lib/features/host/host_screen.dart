@@ -74,7 +74,10 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         FilledButton(
           onPressed: viewModel.isStarting
               ? null
-              : () => viewModel.startSession(_sessionNameController.text),
+              : () => viewModel.startSession(
+                  _sessionNameController.text,
+                  context: context,
+                ),
           child: viewModel.isStarting
               ? const SizedBox(
                   width: 20,
@@ -91,6 +94,8 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
     final controller = viewModel.hostController;
     final track = controller.currentTrack;
     final isLive = viewModel.isLiveBroadcasting;
+    final isSystemAudio = viewModel.isSystemAudioBroadcasting;
+    final anyLiveSource = isLive || isSystemAudio;
 
     final theme = Theme.of(context);
     final listenerCount = controller.listenerStatuses.length;
@@ -134,7 +139,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         Text('Audio source', style: theme.textTheme.titleMedium),
         const SizedBox(height: 10),
         OutlinedButton.icon(
-          onPressed: (viewModel.isPickingFile || isLive) ? null : viewModel.pickAndLoadTrack,
+          onPressed: (viewModel.isPickingFile || anyLiveSource) ? null : viewModel.pickAndLoadTrack,
           icon: const Icon(Icons.library_music),
           label: Text(
             (track == null || track.isLive) ? 'Choose a song' : track.fileName,
@@ -145,8 +150,15 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         _LiveBroadcastButton(
           isLive: isLive,
           isBusy: viewModel.isTogglingLive,
-          onPressed: viewModel.toggleLiveBroadcast,
+          onPressed: () => viewModel.toggleLiveBroadcast(context: context),
         ),
+        // "Broadcast device audio" only exists on platforms that can capture
+        // other apps' output (Android 10+ today).
+        if (viewModel.systemAudioSupported) ...[const SizedBox(height: 10), _DeviceAudioBroadcastButton(
+          isActive: isSystemAudio,
+          isBusy: viewModel.isTogglingSystemAudio,
+          onPressed: () => viewModel.toggleSystemAudioBroadcast(context: context),
+        )],
         if (viewModel.errorMessage != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -158,6 +170,9 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         if (isLive) ...[
           const SizedBox(height: 16),
           const _LiveBroadcastCard(),
+        ] else if (isSystemAudio) ...[
+          const SizedBox(height: 16),
+          const _DeviceAudioBroadcastCard(),
         ] else if (track != null) ...[
           const SizedBox(height: 16),
           Card(
@@ -240,6 +255,99 @@ class _LiveBroadcastButton extends StatelessWidget {
       onPressed: isBusy ? null : onPressed,
       icon: icon,
       label: label,
+    );
+  }
+}
+
+/// Toggle for the "broadcast device audio" capture (audio other apps are
+/// playing). Reads as a call-to-action when off and a clearly-active state
+/// when on; hidden entirely on platforms that can't capture system audio.
+class _DeviceAudioBroadcastButton extends StatelessWidget {
+  const _DeviceAudioBroadcastButton({
+    required this.isActive,
+    required this.isBusy,
+    required this.onPressed,
+  });
+
+  final bool isActive;
+  final bool isBusy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final icon = isBusy
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(isActive ? Icons.stop_circle_outlined : Icons.smartphone);
+    final label = Text(
+      isActive ? 'Stop broadcasting device audio' : 'Broadcast device audio',
+    );
+
+    if (isActive) {
+      return FilledButton.icon(
+        onPressed: isBusy ? null : onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: scheme.tertiary,
+          foregroundColor: scheme.onTertiary,
+        ),
+        icon: icon,
+        label: label,
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: isBusy ? null : onPressed,
+      icon: icon,
+      label: label,
+    );
+  }
+}
+
+/// Shown on the host while a device-audio broadcast is active, in place of
+/// the file transport controls.
+class _DeviceAudioBroadcastCard extends StatelessWidget {
+  const _DeviceAudioBroadcastCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.tertiaryContainer,
+              ),
+              child: Icon(Icons.music_note, color: scheme.tertiary),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Streaming device audio', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Everything this device plays — from any app — is streaming '
+                    'live to every connected device. Open your music app and hit play.',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

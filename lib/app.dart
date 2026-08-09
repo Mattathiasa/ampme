@@ -11,9 +11,11 @@ class AmpmeApp extends StatelessWidget {
     return MaterialApp(
       title: 'Ampme',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark(),
+      // Respect the system appearance: dark theme in dark mode, light theme in
+      // light mode (both share the same brand palette).
+      theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark,
+      themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );
   }

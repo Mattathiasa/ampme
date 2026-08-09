@@ -89,6 +89,17 @@ void main() {
       expectRoundTrip(ControlMessage.volume(senderId: 'host-1', volume: 0.75));
     });
 
+    test('positionSync', () {
+      expectRoundTrip(
+        ControlMessage.positionSync(
+          senderId: 'host-1',
+          trackId: 'track-1',
+          positionMs: 45000,
+          hostTimeMs: 1700000002000,
+        ),
+      );
+    });
+
     test('clockSyncRequest', () {
       expectRoundTrip(
         ControlMessage.clockSyncRequest(senderId: 'listener-1', clientSendTimeMs: 1700000000500),

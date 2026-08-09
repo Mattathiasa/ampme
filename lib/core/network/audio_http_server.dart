@@ -237,6 +237,9 @@ class AudioHttpServer {
     response.headers
       ..set(HttpHeaders.contentTypeHeader, 'audio/wav')
       ..set(HttpHeaders.cacheControlHeader, 'no-cache, no-store')
+      // Any origin may consume the stream (e.g. the web listener's <audio>
+      // element if a cross-origin fetch path is ever used).
+      ..set(HttpHeaders.accessControlAllowOriginHeader, '*')
       // Length is unknown; Dart uses chunked transfer encoding, which
       // ExoPlayer/just_audio consume as a non-seekable live source.
       ..removeAll(HttpHeaders.contentLengthHeader);
@@ -297,7 +300,8 @@ class AudioHttpServer {
     final contentType = lookupMimeType(file.path) ?? 'application/octet-stream';
     request.response.headers
       ..set(HttpHeaders.acceptRangesHeader, 'bytes')
-      ..set(HttpHeaders.contentTypeHeader, contentType);
+      ..set(HttpHeaders.contentTypeHeader, contentType)
+      ..set(HttpHeaders.accessControlAllowOriginHeader, '*');
 
     RangeSpec? range;
     try {
