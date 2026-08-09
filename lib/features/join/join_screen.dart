@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/permissions/app_permissions.dart';
 import '../../utils/platform_info.dart';
+import '../../widgets/web_serving_notice.dart';
 import '../host/widgets/transport_controls.dart';
 import 'join_view_model.dart';
 import 'widgets/qr_scanner_screen.dart';
@@ -102,6 +103,7 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const WebServingNotice(),
               TextField(
                 controller: _codeController,
                 decoration: const InputDecoration(

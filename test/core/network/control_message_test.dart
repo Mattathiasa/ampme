@@ -63,6 +63,26 @@ void main() {
       );
     });
 
+    test('prepare (ready-ack handshake)', () {
+      expectRoundTrip(
+        ControlMessage.prepare(
+          senderId: 'host-1',
+          trackId: 'track-1',
+          positionMs: 1000,
+        ),
+      );
+    });
+
+    test('ready (ready-ack handshake)', () {
+      expectRoundTrip(
+        ControlMessage.ready(
+          senderId: 'listener-1',
+          trackId: 'track-1',
+          positionMs: 1000,
+        ),
+      );
+    });
+
     test('pause', () {
       expectRoundTrip(
         ControlMessage.pause(

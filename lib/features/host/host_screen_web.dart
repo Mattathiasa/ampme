@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../widgets/web_serving_notice.dart';
 import 'web_host_controller.dart';
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
@@ -74,6 +75,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
   Widget _buildSetup(BuildContext context, WebHostViewModel viewModel) {
     return ListView(
       children: [
+        const WebServingNotice(),
         TextField(
           controller: _sessionNameController,
           decoration: const InputDecoration(labelText: 'Session name'),
@@ -129,6 +131,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
 
     return ListView(
       children: [
+        const WebServingNotice(),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),

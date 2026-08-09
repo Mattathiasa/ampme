@@ -40,45 +40,78 @@ import 'package:ampme/core/network/network_utils.dart';
 import 'dart:convert';
 import 'dart:io';
 
+/// One static directory served at a URL prefix ('' for root, '/web' for the
+/// web app beneath the landing page). Longest prefix wins on a request.
+class _StaticRoot {
+  const _StaticRoot({required this.prefix, required this.dir});
+
+  final String prefix;
+  final String dir;
+}
+
 Future<void> main(List<String> args) async {
   var port = 8080;
   String? serveDir;
+  String? docsDir;
+  String? webDir;
   for (var i = 0; i < args.length; i++) {
     if (args[i] == '--port' && i + 1 < args.length) {
       port = int.tryParse(args[i + 1]) ?? port;
     } else if (args[i] == '--serve' && i + 1 < args.length) {
       serveDir = args[i + 1];
+    } else if (args[i] == '--docs' && i + 1 < args.length) {
+      docsDir = args[i + 1];
+    } else if (args[i] == '--web' && i + 1 < args.length) {
+      webDir = args[i + 1];
     } else if (args[i] == '--help' || args[i] == '-h') {
       _printUsage();
       return;
     }
   }
-  // Convenience default: serve the Flutter web build if it exists.
-  serveDir ??= (Directory('build/web').existsSync() ? 'build/web' : null);
+
+  // Default layout: the landing page (docs/) at the root and the web app
+  // (build/web) beneath /web — one URL serves the whole experience over
+  // plain HTTP, which is what browsers need to reach LAN devices. `--serve`
+  // overrides the root for the old single-root behavior.
+  webDir ??= (Directory('build/web').existsSync() ? 'build/web' : null);
+  docsDir ??= (Directory('docs').existsSync() ? 'docs' : null);
+  final roots = <_StaticRoot>[];
+  if (serveDir != null) {
+    roots.add(_StaticRoot(prefix: '', dir: serveDir));
+  } else if (docsDir != null) {
+    roots.add(_StaticRoot(prefix: '', dir: docsDir));
+    if (webDir != null) roots.add(_StaticRoot(prefix: '/web', dir: webDir));
+  } else if (webDir != null) {
+    roots.add(_StaticRoot(prefix: '', dir: webDir));
+  }
 
   final relay = SignalingRelay();
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-  server.listen((request) => _handleRequest(request, relay, serveDir));
+  server.listen((request) => _handleRequest(request, relay, roots));
 
   // Reuse the app's adapter-selection logic (physical adapters first, RFC
   // 1918 preferred, virtual adapters skipped) so the printed URLs are
   // actually reachable by LAN peers.
   final ip = await getLocalWifiIp();
   final hostDisplay = ip ?? 'this machine\'s LAN IP';
+  final hasApp = roots.any((r) => r.prefix == '' && r.dir.endsWith('web')) ||
+      roots.any((r) => r.prefix == '/web');
   print('''
 Ampme web relay running.
   Relay (signaling): ws://$hostDisplay:$port/ws
-  Web app:           http://$hostDisplay:$port/${serveDir == null ? '(no --serve dir given — app not served)' : ''}
-${serveDir == null ? '' : '  (serving web build from: $serveDir)'}
+  Landing page:      http://$hostDisplay:$port/
+  Web app:           http://$hostDisplay:$port/web/  ${!hasApp ? '(no web build found — run flutter build web once)' : ''}
 
 To use it:
-  1. Build the web app once:  flutter build web
-  2. Open http://$hostDisplay:$port on the hosting machine's browser.
-  3. That page hosts the session; native Ampme apps join it by entering the
-     code it shows (relay address + code, e.g. $hostDisplay:$port/AMP-XXXX).
+  1. Open http://$hostDisplay:$port on the hosting machine's browser
+     (the landing page; the web app lives at /web/).
+  2. Click "Open the web app" — that page hosts the session; native Ampme
+     apps join it by entering the code it shows (relay address + code,
+     e.g. $hostDisplay:$port/AMP-XXXX).
 
 Note: the web app must be opened over plain HTTP (not HTTPS) to reach LAN
-hosts — browsers block "mixed content" otherwise.
+hosts — browsers block "mixed content" otherwise (this is also why the
+GitHub Pages copy is a preview only).
 ''');
   print('Press Ctrl+C to stop.');
 }
@@ -87,8 +120,12 @@ void _printUsage() {
   print('''
 Usage: dart run tool/web_relay.dart [options]
   --port <n>       Port to listen on (default 8080).
-  --serve <dir>    Directory of the web build to serve (default build/web if
-                   it exists). Omit to run signaling-only.
+  --serve <dir>    Serve this single directory at the root (overrides the
+                   docs+web layout below).
+  --docs <dir>     Directory of the landing page to serve at the root
+                   (default docs/ if it exists).
+  --web <dir>      Directory of the Flutter web build to serve at /web/
+                   (default build/web if it exists).
   --help           Show this help.
 ''');
 }
@@ -96,7 +133,7 @@ Usage: dart run tool/web_relay.dart [options]
 Future<void> _handleRequest(
   HttpRequest request,
   SignalingRelay relay,
-  String? serveDir,
+  List<_StaticRoot> roots,
 ) async {
   if (WebSocketTransformer.isUpgradeRequest(request) &&
       request.uri.path == '/ws') {
@@ -104,26 +141,53 @@ Future<void> _handleRequest(
     relay.handleClient(socket);
     return;
   }
-  if (serveDir == null) {
+  if (roots.isEmpty) {
     request.response
       ..statusCode = HttpStatus.notFound
       ..headers.contentType = ContentType.text
       ..write(
         'Ampme web relay is running (signaling only). '
-        'Serve the web app with --serve build/web.\n',
+        'Serve the app with --web build/web (and the landing page with '
+        '--docs docs).\n',
       );
     await request.response.close();
     return;
   }
-  await _serveStatic(request, serveDir);
+  await _serveStatic(request, roots);
 }
 
-Future<void> _serveStatic(HttpRequest request, String root) async {
+Future<void> _serveStatic(HttpRequest request, List<_StaticRoot> roots) async {
   final response = request.response;
-  final relative = request.uri.path == '/' ? 'index.html' : request.uri.path;
+  final path = request.uri.path;
+
+  // Longest prefix wins, so /web/... resolves into the web build while
+  // everything else falls through to the root (landing page).
+  _StaticRoot? best;
+  for (final root in roots) {
+    if (root.prefix == '') {
+      best ??= root;
+      continue;
+    }
+    if (path == root.prefix || path.startsWith('${root.prefix}/')) {
+      if (best == null || root.prefix.length > best.prefix.length) best = root;
+    }
+  }
+  if (best == null) {
+    response.statusCode = HttpStatus.notFound;
+    await response.close();
+    return;
+  }
+
+  var relative = best.prefix.isEmpty
+      ? (path == '/' ? 'index.html' : path)
+      : (path == best.prefix
+            ? 'index.html'
+            : path.substring(best.prefix.length + 1));
+  // Trailing-slash directory requests (e.g. `/web/`) resolve to the index.
+  if (relative.isEmpty || relative == '/') relative = 'index.html';
   // Resolve and guard against path traversal.
-  final file = File('${root.replaceAll('\\', '/')}/$relative');
-  final rootAbs = Directory(root).absolute.path.replaceAll('\\', '/');
+  final file = File('${best.dir.replaceAll('\\', '/')}/$relative');
+  final rootAbs = Directory(best.dir).absolute.path.replaceAll('\\', '/');
   final fileAbs = file.absolute.path.replaceAll('\\', '/');
   if (!fileAbs.startsWith('$rootAbs/') && fileAbs != '$rootAbs/index.html') {
     response.statusCode = HttpStatus.forbidden;

@@ -21,6 +21,12 @@ plays it back in sync — no cables, no cloud, just the local WiFi network.
   listeners apply tiny (~30ms) corrections, so drift never grows audible.
   Clock sync runs continuously (a sample every 2s, plus a burst before every
   scheduled start) so time conversions stay fresh.
+- **Ready-ack starts**: before a play/seek, the host asks every listener to
+  pre-buffer at the target position (`prepare`), waits for them to confirm
+  (`ready`), and only then picks the wall-clock start instant. No device has
+  to buffer *after* the scheduled time — the classic cause of "one device
+  starts a second late". If a listener never acks, the host proceeds anyway
+  and that device falls back to a catch-up seek.
 
 Browse `lib/core/network/` for the sync protocol implementation.
 
@@ -122,14 +128,24 @@ serves the web app, so the whole flow is one command:
 
 ```sh
 flutter build web                 # once, after code changes
-dart run tool/web_relay.dart      # serves the app + runs signaling
-# or: dart run tool/web_relay.dart --port 8080 --serve build/web
+dart run tool/web_relay.dart      # serves the landing page + web app + signaling
+# or: dart run tool/web_relay.dart --port 8080 --docs docs --web build/web
 ```
 
-Then open the printed `http://<lan-ip>:8080` on the hosting machine and
-click **Host a Session**. Listeners join by entering the code shown
+The relay serves the **landing page** (`docs/`) at the root and the **web
+app** (`build/web`) beneath `/web/`, so the whole flow is one URL: open the
+printed `http://<lan-ip>:8080` on the hosting machine, click **Open the web
+app**, then **Host a Session**. Listeners join by entering the code shown
 (`<relay-ip>:8080/AMP-XXXX` — relay address + session token) in the native
 app's join-by-code field.
+
+**GitHub Pages preview**: the same web build is committed under
+`docs/web/`, so the landing page (`https://mattathiasa.github.io/ampme/`)
+links to a hosted copy at `/ampme/web/`. That copy renders the full UI but
+cannot reach LAN devices — browsers block secure (HTTPS) pages from
+connecting to plain-HTTP hosts (mixed content) — so it shows an in-app
+notice pointing at the LAN relay flow above, which is where hosting and
+joining actually work.
 
 Web-hosting notes:
 
@@ -141,7 +157,7 @@ Web-hosting notes:
 - Keep the hosting tab open and visible — browsers throttle background tabs
   (timers/audio), which would let listeners drift.
 - `dart run tool/web_relay.dart --port 8080` alone runs signaling-only if
-  you're serving the web build some other way.
+  you're serving the app some other way.
 
 
 ## Production setup
