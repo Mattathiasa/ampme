@@ -6,6 +6,8 @@ import 'track_info.dart';
 enum ControlMessageType {
   welcome,
   trackChanged,
+  prepare,
+  ready,
   play,
   pause,
   seek,
@@ -102,6 +104,38 @@ class ControlMessage {
       type: ControlMessageType.trackChanged,
       senderId: senderId,
       payload: track.toJson(),
+    );
+  }
+
+  /// Host -> listener: pre-buffer this track at [positionMs] and reply with
+  /// `ready` once you can start producing audio there instantly. Part of the
+  /// synchronized-start handshake: the host only picks the play's target
+  /// wall-clock instant after (nearly) every listener has acknowledged, so a
+  /// slow-buffering device can never make the scheduled start land late.
+  factory ControlMessage.prepare({
+    required String senderId,
+    required String trackId,
+    required int positionMs,
+  }) {
+    return ControlMessage(
+      type: ControlMessageType.prepare,
+      senderId: senderId,
+      payload: {'trackId': trackId, 'positionMs': positionMs},
+    );
+  }
+
+  /// Listener -> host: this device is buffered at [positionMs] and armed for
+  /// the upcoming play/seek. [trackId]/[positionMs] let the host sanity-check
+  /// that a stale ack from a previous command isn't counted.
+  factory ControlMessage.ready({
+    required String senderId,
+    required String trackId,
+    required int positionMs,
+  }) {
+    return ControlMessage(
+      type: ControlMessageType.ready,
+      senderId: senderId,
+      payload: {'trackId': trackId, 'positionMs': positionMs},
     );
   }
 

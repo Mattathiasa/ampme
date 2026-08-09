@@ -85,6 +85,20 @@ class ControlClient {
   /// yet" when it schedules a synchronized start.
   int get syncSampleCount => _estimator.sampleCount;
 
+  /// Wall-clock time the most recent clock-sync sample was recorded at.
+  /// Lets callers skip a sync burst when the estimate is already current
+  /// (the steady-state sync runs every 2s, so a <1s-old offset is plenty
+  /// accurate for a scheduled start — waiting for new samples would just eat
+  /// into the scheduling lead and turn into audible late starts).
+  DateTime? _lastSyncSampleAt;
+
+  /// Whether the estimator already holds a sample young enough to convert
+  /// host times with, so callers can skip [syncNow]'s fresh-burst wait.
+  bool isSyncFresh({Duration within = const Duration(milliseconds: 600)}) {
+    final t = _lastSyncSampleAt;
+    return t != null && DateTime.now().difference(t) <= within;
+  }
+
   /// Restarts the clock-sync burst immediately. Called right before a
   /// scheduled start, where offset error converts directly into playback
   /// lag: a fresh burst yields low-latency samples within a few hundred ms
@@ -149,6 +163,7 @@ class ControlClient {
       final t1 = message.payload['hostTimeMs'] as int;
       final t2 = DateTime.now().millisecondsSinceEpoch;
       _estimator.addSample(ClockSyncSample(t0: t0, t1: t1, t2: t2));
+      _lastSyncSampleAt = DateTime.now();
       return;
     }
 
@@ -266,6 +281,7 @@ class ControlClient {
     await _channel?.sink.close();
     _channel = null;
     _estimator.reset();
+    _lastSyncSampleAt = null;
   }
 
   Future<void> dispose() async {

@@ -187,6 +187,8 @@ class ListenerSessionController extends ChangeNotifier
         // paused at position 0) so a follow-up play command starts instantly.
         unawaited(_loadCurrentTrack(preBufferAt: Duration.zero));
         notifyListeners();
+      case ControlMessageType.prepare:
+        unawaited(_handlePrepare(message));
       case ControlMessageType.play:
       case ControlMessageType.seek:
         unawaited(_handleScheduledStart(message));
@@ -200,10 +202,54 @@ class ListenerSessionController extends ChangeNotifier
         break;
       case ControlMessageType.sessionEnded:
         _handleHostGone();
+      case ControlMessageType.ready:
       case ControlMessageType.clockSyncRequest:
       case ControlMessageType.clockSyncResponse:
       case ControlMessageType.listenerStatusUpdate:
         break; // not expected in the listener->UI direction
+    }
+  }
+
+  /// Part of the host's ready-ack start handshake: pre-buffers at the
+  /// position the upcoming play/seek will start from, then tells the host
+  /// this device is ready. The host picks its target instant only after
+  /// (nearly) every listener has acknowledged, so buffering happens *before*
+  /// the audible instant instead of bleeding into it — which is what makes a
+  /// slow-buffering device start a second late.
+  Future<void> _handlePrepare(ControlMessage message) async {
+    try {
+      final track = currentTrack;
+      if (track == null || track.isLive) return;
+      final messageTrackId = message.payload['trackId'] as String?;
+      if (messageTrackId == null || messageTrackId != track.trackId) return;
+      final positionMs = message.payload['positionMs'] as int? ?? 0;
+
+      // Refresh the clock estimate while buffering (a fresh offset makes the
+      // follow-up play's host->local conversion exact), then make sure any
+      // in-flight welcome/load has finished so we prepare against the loaded
+      // source rather than racing it.
+      _client?.syncNow();
+      await _waitForFreshSyncSamples();
+      final pendingWelcome = _pendingWelcome;
+      if (pendingWelcome != null) await pendingWelcome;
+      final pending = _pendingLoad;
+      if (pending != null) await pending;
+
+      // The track may have changed while awaiting; re-check before preparing.
+      final current = currentTrack;
+      if (current == null || current.isLive || current.trackId != messageTrackId) {
+        return;
+      }
+      await audioEngine.prepareForStart(Duration(milliseconds: positionMs));
+      _client?.send(
+        ControlMessage.ready(
+          senderId: selfDevice.deviceId,
+          trackId: messageTrackId,
+          positionMs: positionMs,
+        ),
+      );
+    } catch (e, st) {
+      reportError(e, st, context: 'prepareForStart');
     }
   }
 
@@ -254,9 +300,15 @@ class ListenerSessionController extends ChangeNotifier
   /// Waits (bounded by [_freshSyncWait]) until the clock-sync burst has
   /// produced a couple of fresh samples, so host->local time conversions use
   /// a real offset instead of a stale or zero one.
+  ///
+  /// Short-circuits when the estimator already holds a current sample (the
+  /// steady-state sync runs every 2s): a <1s-old offset is accurate to well
+  /// under a millisecond on a LAN, and burning the wait anyway would eat the
+  /// scheduling lead and turn into audible late starts.
   Future<void> _waitForFreshSyncSamples() async {
     final client = _client;
     if (client == null) return;
+    if (client.isSyncFresh()) return;
     final before = client.syncSampleCount;
     final deadline = DateTime.now().add(_freshSyncWait);
     while (DateTime.now().isBefore(deadline)) {

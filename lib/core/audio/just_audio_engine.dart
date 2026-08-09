@@ -117,6 +117,12 @@ class JustAudioEngine implements AudioEngine {
 
   @override
   Future<void> prepareForStart(Duration position) async {
+    // Pause first: if this runs while the player is audibly playing (a seek
+    // command re-buffering mid-song), seeking without pausing would make the
+    // device keep playing from the new position on its own, and the follow-up
+    // scheduled start would then sound like a double-start. The host sends
+    // the audible start separately, so being paused here is always correct.
+    await _player.pause();
     // Best-effort pre-buffering: seek to where playback will begin and wait
     // until the player reports ready, so a later scheduled start is
     // instantaneous. The timeout is generous — a slow first fetch must never

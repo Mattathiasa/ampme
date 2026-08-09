@@ -23,18 +23,29 @@ import '../network/network_utils.dart';
 import '../../utils/id_generator.dart';
 
 /// How far into the future a `play`/`seek` command's target start time is
-/// set. Must be comfortably longer than typical LAN round-trip + listener
-/// buffering time so every listener has already pre-buffered and armed
-/// its scheduled `Timer` before the instant arrives.
-const Duration _scheduleLeadTime = Duration(milliseconds: 800);
+/// set. Listeners have already confirmed they are buffered and armed (the
+/// ready-ack handshake in [_scheduleSynchronizedStart]) before this instant
+/// is picked, so the lead only needs to cover control-message delivery +
+/// timer precision — not buffering.
+const Duration _scheduleLeadTime = Duration(milliseconds: 500);
 
-/// Deviation (ms) between a listener's reported playhead and the host's own
-/// beyond which the listener is considered out of sync and is sent a precise
-/// host position reference to re-anchor on. Smaller than this would chase
-/// clock-estimate noise (a correction seek is itself audible). Kept tight
-/// because the host now also broadcasts measured references every second, so
-/// any real drift is caught on the next tick anyway.
-const int _maxDriftMs = 60;
+/// How long the host waits for every connected listener to acknowledge the
+/// `prepare` ("I'm buffered at this position") before scheduling the audible
+/// start anyway. Bounded so one dead/slow device can never stall the whole
+/// room; typical LAN acks arrive in tens of ms.
+const Duration _readyAckTimeout = Duration(milliseconds: 1500);  /// Deviation (ms) between a listener's reported playhead and the host's own
+  /// beyond which the listener is considered out of sync and is sent a precise
+  /// host position reference to re-anchor on. Smaller than this would chase
+  /// clock-estimate noise (a correction seek is itself audible). Kept tight
+  /// because the host now also broadcasts measured references every second, so
+  /// any real drift is caught on the next tick anyway.
+  const int _maxDriftMs = 60;
+
+  /// Listeners that acknowledged the in-flight `prepare` (deviceId set).
+  /// Only counted while [_awaitingReadyAcks] is true, so a stale ack from a
+  /// previous command can never satisfy the current one.
+  final Set<String> _readyAcks = {};
+  bool _awaitingReadyAcks = false;
 
 /// Orchestrates a hosted session: owns the audio engine (what the host
 /// itself hears), the local HTTP server (audio streaming + control
@@ -181,17 +192,7 @@ class HostSessionController extends ChangeNotifier {
     // already stopped the reference timer — cancel again to be certain a
     // stale reference never fires mid-transition.
     _stopPositionSyncTimer();
-
-    final startAt = DateTime.now().add(_scheduleLeadTime);
-    await audioEngine.scheduleStart(at: startAt, position: position);
-    _controlServer.broadcast(
-      ControlMessage.play(
-        senderId: hostDevice.deviceId,
-        trackId: track.trackId,
-        positionMs: position.inMilliseconds,
-        startAtHostTimeMs: startAt.millisecondsSinceEpoch,
-      ),
-    );
+    await _scheduleSynchronizedStart(track: track, position: position);
   }
 
   Future<void> pause() async {
@@ -213,17 +214,106 @@ class HostSessionController extends ChangeNotifier {
     final track = currentTrack;
     if (track == null) return;
     _stopPositionSyncTimer();
+    await _scheduleSynchronizedStart(track: track, position: target, asSeek: true);
+  }
+
+/// The in-flight synchronized start, used to serialize rapid play/seek
+  /// commands: a second command awaits the first handshake instead of
+  /// overlapping it (which would interleave `prepare` broadcasts and ack
+  /// windows).
+  Future<void>? _inFlightStart;
+
+  /// The heart of synchronized starting: asks every connected listener to
+  /// pre-buffer at [position] (`prepare`), waits (bounded) until they all
+  /// acknowledge (`ready`), and only then picks the target wall-clock
+  /// instant and broadcasts the actual play/seek. Because listeners were
+  /// already buffered and armed before [startAtHostTimeMs] was chosen, no
+  /// device has to buffer *after* the scheduled instant — the dominant cause
+  /// of the "one device starts a second late" failure. Falls back to a plain
+  /// schedule (plus the catch-up logic in the engine) when a listener never
+  /// acks, so one slow device can't stall the room.
+  Future<void> _scheduleSynchronizedStart({
+    required TrackInfo track,
+    required Duration position,
+    bool asSeek = false,
+  }) async {
+    // Serialize: if a previous play/seek handshake is still in flight, wait
+    // for it to finish before starting this one so prepare broadcasts, ack
+    // windows and scheduled timers can never interleave.
+    while (_inFlightStart != null) {
+      await _inFlightStart;
+    }
+    final run = _doScheduledStart(
+      track: track,
+      position: position,
+      asSeek: asSeek,
+    );
+    _inFlightStart = run;
+    try {
+      await run;
+    } finally {
+      if (identical(_inFlightStart, run)) _inFlightStart = null;
+    }
+  }
+
+  Future<void> _doScheduledStart({
+    required TrackInfo track,
+    required Duration position,
+    required bool asSeek,
+  }) async {
+    final listeners = _controlServer.connectedDeviceIds.toList();
+    if (listeners.isNotEmpty && !track.isLive) {
+      _readyAcks.clear();
+      _awaitingReadyAcks = true;
+      try {
+        _controlServer.broadcast(
+          ControlMessage.prepare(
+            senderId: hostDevice.deviceId,
+            trackId: track.trackId,
+            positionMs: position.inMilliseconds,
+          ),
+        );
+        await _waitForReadyAcks(listeners);
+      } finally {
+        // A broadcast/socket error must never leave the ack window open,
+        // or a later stray `ready` would be counted against a new handshake.
+        _awaitingReadyAcks = false;
+      }
+    }
 
     final startAt = DateTime.now().add(_scheduleLeadTime);
-    await audioEngine.scheduleStart(at: startAt, position: target);
+    await audioEngine.scheduleStart(at: startAt, position: position);
     _controlServer.broadcast(
-      ControlMessage.seek(
-        senderId: hostDevice.deviceId,
-        trackId: track.trackId,
-        positionMs: target.inMilliseconds,
-        startAtHostTimeMs: startAt.millisecondsSinceEpoch,
-      ),
+      asSeek
+          ? ControlMessage.seek(
+              senderId: hostDevice.deviceId,
+              trackId: track.trackId,
+              positionMs: position.inMilliseconds,
+              startAtHostTimeMs: startAt.millisecondsSinceEpoch,
+            )
+          : ControlMessage.play(
+              senderId: hostDevice.deviceId,
+              trackId: track.trackId,
+              positionMs: position.inMilliseconds,
+              startAtHostTimeMs: startAt.millisecondsSinceEpoch,
+            ),
     );
+  }
+
+  /// Polls until every listener in [listeners] has sent `ready`, or
+  /// [_readyAckTimeout] elapses (proceed anyway — the engine's catch-up
+  /// path covers unacknowledged devices). Listeners that disconnect
+  /// mid-handshake stop counting, so a dropped device can't stall the room.
+  Future<void> _waitForReadyAcks(List<String> listeners) async {
+    final deadline = DateTime.now().add(_readyAckTimeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final connected = _controlServer.connectedDeviceIds;
+      final allReady = listeners.every(
+        (id) => _readyAcks.contains(id) || !connected.contains(id),
+      );
+      if (allReady) return;
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    }
   }
 
   Future<void> setVolume(double newVolume) async {
@@ -392,6 +482,10 @@ class HostSessionController extends ChangeNotifier {
           // precise reference right now instead of waiting for a user action.
           _maybeCorrectListenerDrift(incoming.deviceId, status.positionMs);
           notifyListeners();
+        case ControlMessageType.ready:
+          // Counted only while a prepare handshake is in flight, so stale
+          // acks from a previous command can't satisfy the current wait.
+          if (_awaitingReadyAcks) _readyAcks.add(incoming.deviceId);
         default:
           break;
       }
@@ -427,16 +521,7 @@ class HostSessionController extends ChangeNotifier {
       final track = currentTrack;
       if (track != null) {
         // Re-arm in sync: listeners receive a fresh scheduled start instant.
-        final startAt = DateTime.now().add(_scheduleLeadTime);
-        await audioEngine.scheduleStart(at: startAt, position: position);
-        _controlServer.broadcast(
-          ControlMessage.play(
-            senderId: hostDevice.deviceId,
-            trackId: track.trackId,
-            positionMs: position.inMilliseconds,
-            startAtHostTimeMs: startAt.millisecondsSinceEpoch,
-          ),
-        );
+        await _scheduleSynchronizedStart(track: track, position: position);
       }
     }
   }
