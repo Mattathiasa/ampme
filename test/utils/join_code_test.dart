@@ -61,4 +61,63 @@ void main() {
       expect(parseJoinCode(':54213'), isNull);
     });
   });
+
+  group('parseWebSessionCode', () {
+    test('parses relay host:port/code', () {
+      expect(
+        parseWebSessionCode('192.168.1.10:8080/AMP-4821'),
+        const WebSessionAddress(
+          relayHost: '192.168.1.10',
+          relayPort: 8080,
+          code: 'AMP-4821',
+        ),
+      );
+    });
+
+    test('parses http:// and ws:// forms', () {
+      expect(
+        parseWebSessionCode('http://192.168.1.10:8080/AMP-4821'),
+        const WebSessionAddress(
+          relayHost: '192.168.1.10',
+          relayPort: 8080,
+          code: 'AMP-4821',
+        ),
+      );
+      expect(
+        parseWebSessionCode('ws://relay.local:9000/ABC123'),
+        const WebSessionAddress(
+          relayHost: 'relay.local',
+          relayPort: 9000,
+          code: 'ABC123',
+        ),
+      );
+    });
+
+    test('ignores extra path segments', () {
+      expect(
+        parseWebSessionCode('10.0.0.5:1234/AMP-9999/extra'),
+        const WebSessionAddress(
+          relayHost: '10.0.0.5',
+          relayPort: 1234,
+          code: 'AMP-9999',
+        ),
+      );
+    });
+
+    test('rejects codes without a token after the port', () {
+      expect(parseWebSessionCode('192.168.1.10:8080'), isNull);
+      expect(parseWebSessionCode('192.168.1.10:8080/'), isNull);
+    });
+
+    test('rejects missing/invalid port', () {
+      expect(parseWebSessionCode('192.168.1.10/AMP-4821'), isNull);
+      expect(parseWebSessionCode('192.168.1.10:0/AMP-4821'), isNull);
+      expect(parseWebSessionCode('192.168.1.10:99999/AMP-4821'), isNull);
+    });
+
+    test('rejects empty input', () {
+      expect(parseWebSessionCode(''), isNull);
+      expect(parseWebSessionCode('   '), isNull);
+    });
+  });
 }

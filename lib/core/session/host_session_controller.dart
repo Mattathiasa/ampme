@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 
 import '../audio/audio_engine.dart';
+import '../audio/audio_session_manager.dart';
 import '../audio/just_audio_engine.dart';
 import '../audio/live_mic_broadcaster.dart';
+import '../audio/system_audio_capture.dart';
+import '../observability/reporting.dart';
 import '../network/audio_http_server.dart';
 import '../network/control_server.dart';
 import '../network/discovery/session_broadcaster.dart';
@@ -24,6 +28,14 @@ import '../../utils/id_generator.dart';
 /// its scheduled `Timer` before the instant arrives.
 const Duration _scheduleLeadTime = Duration(milliseconds: 800);
 
+/// Deviation (ms) between a listener's reported playhead and the host's own
+/// beyond which the listener is considered out of sync and is sent a precise
+/// host position reference to re-anchor on. Smaller than this would chase
+/// clock-estimate noise (a correction seek is itself audible). Kept tight
+/// because the host now also broadcasts measured references every second, so
+/// any real drift is caught on the next tick anyway.
+const int _maxDriftMs = 60;
+
 /// Orchestrates a hosted session: owns the audio engine (what the host
 /// itself hears), the local HTTP server (audio streaming + control
 /// WebSocket upgrade), the control server (listener messaging), and the
@@ -31,7 +43,11 @@ const Duration _scheduleLeadTime = Duration(milliseconds: 800);
 /// `HostViewModel` can listen directly with `provider`.
 class HostSessionController extends ChangeNotifier {
   HostSessionController({required this.hostDevice, AudioEngine? audioEngine})
-    : audioEngine = audioEngine ?? JustAudioEngine();
+    : audioEngine = audioEngine ?? JustAudioEngine() {
+    // Capture can also end outside Dart's control (user stops the system
+    // notification / consent is revoked): reset the broadcast state then.
+    _systemAudioCapture.onStopped = _handleSystemAudioStopped;
+  }
 
   final DeviceInfo hostDevice;
   final AudioEngine audioEngine;
@@ -40,6 +56,7 @@ class HostSessionController extends ChangeNotifier {
   final _controlServer = ControlServer();
   final _broadcaster = SessionBroadcaster();
   final _micBroadcaster = LiveMicBroadcaster();
+  final _systemAudioCapture = SystemAudioCapture();
   final _knownListeners = <String>{};
 
   final String sessionId = generateId();
@@ -66,6 +83,16 @@ class HostSessionController extends ChangeNotifier {
   StreamSubscription? _disconnectSub;
   StreamSubscription? _positionSub;
   StreamSubscription? _stateSub;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
+
+  /// While a file track is playing, ticks once per second and broadcasts the
+  /// host's *measured* playhead to every listener — the authoritative
+  /// reference listeners re-anchor on. See [AudioEngine.currentPosition].
+  Timer? _positionSyncTimer;
+
+  /// Whether the host paused because of an audio interruption (phone call,
+  /// navigation, another media app) so it can resume when the interruption ends.
+  bool _pausedForInterruption = false;
 
   Future<void> start(String name) async {
     sessionName = name;
@@ -83,8 +110,18 @@ class HostSessionController extends ChangeNotifier {
     });
     _stateSub = audioEngine.stateStream.listen((state) {
       playbackState = state;
+      // Feed the drift-correction loop: while we're audibly playing a file,
+      // every listener gets a fresh measured reference once a second.
+      if (state == PlaybackState.playing) {
+        _startPositionSyncTimer();
+      } else {
+        _stopPositionSyncTimer();
+      }
       notifyListeners();
     });
+    _interruptionSub = AudioSessionManager.instance.interruptionEvents.listen(
+      _handleInterruption,
+    );
 
     localIp = await getLocalWifiIp();
     await _broadcaster.start(
@@ -104,9 +141,18 @@ class HostSessionController extends ChangeNotifier {
   /// ("amplify the room") rather than a picked file.
   bool get isLiveBroadcasting => _micBroadcaster.isBroadcasting;
 
+  /// Whether the host is currently broadcasting the device's system audio
+  /// (audio other apps are playing).
+  bool get isSystemAudioBroadcasting => _systemAudioCapture.isCapturing;
+
+  /// Whether the current platform can capture other apps' audio (Android
+  /// 10+); the host UI hides the "Broadcast device audio" control otherwise.
+  Future<bool> isSystemAudioSupported() => _systemAudioCapture.isSupported();
+
   Future<void> loadTrack(File file, {required String fileName}) async {
     // A file and a live broadcast are mutually exclusive sources.
     if (_micBroadcaster.isBroadcasting) await stopLiveBroadcast();
+    if (_systemAudioCapture.isCapturing) await stopSystemAudioBroadcast();
 
     final trackId = generateId();
     _httpServer.setCurrentTrack(trackId: trackId, file: file);
@@ -131,6 +177,10 @@ class HostSessionController extends ChangeNotifier {
   Future<void> play() async {
     final track = currentTrack;
     if (track == null) return;
+    // During the scheduling lead the engine is paused, so the state listener
+    // already stopped the reference timer — cancel again to be certain a
+    // stale reference never fires mid-transition.
+    _stopPositionSyncTimer();
 
     final startAt = DateTime.now().add(_scheduleLeadTime);
     await audioEngine.scheduleStart(at: startAt, position: position);
@@ -145,6 +195,7 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> pause() async {
+    _stopPositionSyncTimer();
     await audioEngine.pause();
     final track = currentTrack;
     if (track == null) return;
@@ -161,6 +212,7 @@ class HostSessionController extends ChangeNotifier {
   Future<void> seek(Duration target) async {
     final track = currentTrack;
     if (track == null) return;
+    _stopPositionSyncTimer();
 
     final startAt = DateTime.now().add(_scheduleLeadTime);
     await audioEngine.scheduleStart(at: startAt, position: target);
@@ -189,24 +241,80 @@ class HostSessionController extends ChangeNotifier {
   /// the host's own [audioEngine] stays idle.
   Future<void> startLiveBroadcast() async {
     if (_micBroadcaster.isBroadcasting) return;
+    if (_systemAudioCapture.isCapturing) await stopSystemAudioBroadcast();
 
     // Stop any file playback so the two sources don't overlap.
     await audioEngine.pause();
     await _micBroadcaster.start();
-
-    final trackId = generateId();
-    _httpServer.setLiveSource(
-      trackId: trackId,
+    await _startLiveSource(
       pcm: _micBroadcaster.pcmStream,
       sampleRate: LiveMicBroadcaster.sampleRate,
       channels: LiveMicBroadcaster.channels,
+      label: 'Live audio',
+    );
+  }
+
+  /// Ends the live broadcast, tells listeners to stop, and returns the
+  /// session to "no track selected".
+  Future<void> stopLiveBroadcast() async {
+    if (!_micBroadcaster.isBroadcasting) return;
+    await _micBroadcaster.stop();
+    await _stopLiveSource();
+  }
+
+  /// Starts broadcasting the device's **system audio** — whatever other apps
+  /// are playing — to every listener. Shows the system consent dialog; throws
+  /// a `PlatformException` (code `CAPTURE_DENIED`) if the user denies it.
+  ///
+  /// Like the mic broadcast, the host itself doesn't hear the captured audio
+  /// (playing it back would feed back into the capture); listeners hear
+  /// exactly what the host device's speakers are playing.
+  Future<void> startSystemAudioBroadcast() async {
+    if (_systemAudioCapture.isCapturing) return;
+    if (_micBroadcaster.isBroadcasting) await stopLiveBroadcast();
+
+    // Start capture first (it can be denied by the consent dialog, in which
+    // case a playing file must be left untouched), then pause file playback
+    // so the two sources don't overlap.
+    await _systemAudioCapture.start();
+    await audioEngine.pause();
+    await _startLiveSource(
+      pcm: _systemAudioCapture.pcmStream,
+      sampleRate: SystemAudioCapture.sampleRate,
+      channels: SystemAudioCapture.channels,
+      label: 'Device audio',
+    );
+  }
+
+  /// Ends the device-audio broadcast, tells listeners to stop, and returns
+  /// the session to "no track selected".
+  Future<void> stopSystemAudioBroadcast() async {
+    if (!_systemAudioCapture.isCapturing) return;
+    await _systemAudioCapture.stop();
+    await _stopLiveSource();
+  }
+
+  /// Points the HTTP server's live route at [pcm] and announces the new live
+  /// track to every listener. Shared by the mic and system-audio broadcasts.
+  Future<void> _startLiveSource({
+    required Stream<List<int>> pcm,
+    required int sampleRate,
+    required int channels,
+    required String label,
+  }) async {
+    final trackId = generateId();
+    _httpServer.setLiveSource(
+      trackId: trackId,
+      pcm: pcm,
+      sampleRate: sampleRate,
+      channels: channels,
     );
 
     final ip = localIp ?? await getLocalWifiIp();
     final streamUrl = 'http://$ip:${_httpServer.port}/live/$trackId';
     currentTrack = TrackInfo(
       trackId: trackId,
-      fileName: 'Live audio',
+      fileName: label,
       streamUrl: streamUrl,
       durationMs: 0,
       isLive: true,
@@ -220,13 +328,10 @@ class HostSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ends the live broadcast, tells listeners to stop, and returns the
-  /// session to "no track selected".
-  Future<void> stopLiveBroadcast() async {
-    if (!_micBroadcaster.isBroadcasting) return;
+  /// Tears down the current live source: clears the server's live route,
+  /// tells listeners to stop, and returns to "no track selected".
+  Future<void> _stopLiveSource() async {
     final endedTrack = currentTrack;
-
-    await _micBroadcaster.stop();
     _httpServer.clearLiveSource();
 
     if (endedTrack != null) {
@@ -245,39 +350,171 @@ class HostSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleIncoming(IncomingControlMessage incoming) {
-    if (_knownListeners.add(incoming.deviceId)) {
-      _sendWelcome(incoming.deviceId);
-    }
+  /// The user stopped the capture from the system notification (or consent
+  /// was revoked): the audio stream has ended, so reset the broadcast state
+  /// the same way an explicit stop would. Note [_systemAudioCapture] has
+  /// already reset its own `isCapturing` by the time this runs, so the
+  /// teardown below must not depend on it.
+  Future<void> _handleSystemAudioStopped() async {
+    await _stopLiveSource();
+  }
 
-    final message = incoming.message;
-    switch (message.type) {
-      case ControlMessageType.clockSyncRequest:
-        final t0 = message.payload['clientSendTimeMs'] as int;
-        _controlServer.sendTo(
-          incoming.deviceId,
-          ControlMessage.clockSyncResponse(
-            senderId: hostDevice.deviceId,
-            clientSendTimeMs: t0,
-            hostTimeMs: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
-      case ControlMessageType.listenerStatusUpdate:
-        _listenerStatuses[incoming.deviceId] = ListenerStatus(
-          deviceId: incoming.deviceId,
-          deviceName: message.payload['deviceName'] as String,
-          playbackState: PlaybackStateJson.fromJsonValue(message.payload['playbackState'] as String),
-          positionMs: message.payload['positionMs'] as int,
-          syncOffsetMs: message.payload['syncOffsetMs'] as int,
-          roundTripMs: message.payload['roundTripMs'] as int,
-        );
-        notifyListeners();
-      default:
-        break;
+  void _handleIncoming(IncomingControlMessage incoming) {
+    try {
+      if (_knownListeners.add(incoming.deviceId)) {
+        _sendWelcome(incoming.deviceId);
+      }
+
+      final message = incoming.message;
+      switch (message.type) {
+        case ControlMessageType.clockSyncRequest:
+          final t0 = message.payload['clientSendTimeMs'] as int;
+          _controlServer.sendTo(
+            incoming.deviceId,
+            ControlMessage.clockSyncResponse(
+              senderId: hostDevice.deviceId,
+              clientSendTimeMs: t0,
+              hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+        case ControlMessageType.listenerStatusUpdate:
+          final status = ListenerStatus(
+            deviceId: incoming.deviceId,
+            deviceName: message.payload['deviceName'] as String,
+            playbackState: PlaybackStateJson.fromJsonValue(message.payload['playbackState'] as String),
+            positionMs: message.payload['positionMs'] as int,
+            syncOffsetMs: message.payload['syncOffsetMs'] as int,
+            roundTripMs: message.payload['roundTripMs'] as int,
+          );
+          _listenerStatuses[incoming.deviceId] = status;
+          // Keep the listener locked to the host's playhead: listeners report
+          // their position every 2s, so if theirs has drifted we can send a
+          // precise reference right now instead of waiting for a user action.
+          _maybeCorrectListenerDrift(incoming.deviceId, status.positionMs);
+          notifyListeners();
+        default:
+          break;
+      }
+    } catch (e, st) {
+      // A malformed frame from the network must never take the host down.
+      reportError(e, st, context: 'handleIncoming');
     }
   }
 
+  /// A phone call / navigation prompt / other app took audio focus: pause and
+  /// tell listeners (their own players are not interrupted, so without this
+  /// broadcast they'd keep playing out of sync). A temporary interruption
+  /// re-arms playback in sync when it ends.
+  Future<void> _handleInterruption(AudioInterruptionEvent event) async {
+    if (event.begin) {
+      if (playbackState == PlaybackState.playing) {
+        _pausedForInterruption = true;
+        await audioEngine.pause();
+        final track = currentTrack;
+        if (track != null) {
+          _controlServer.broadcast(
+            ControlMessage.pause(
+              senderId: hostDevice.deviceId,
+              trackId: track.trackId,
+              positionMs: position.inMilliseconds,
+              hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+        }
+      }
+    } else if (_pausedForInterruption) {
+      _pausedForInterruption = false;
+      final track = currentTrack;
+      if (track != null) {
+        // Re-arm in sync: listeners receive a fresh scheduled start instant.
+        final startAt = DateTime.now().add(_scheduleLeadTime);
+        await audioEngine.scheduleStart(at: startAt, position: position);
+        _controlServer.broadcast(
+          ControlMessage.play(
+            senderId: hostDevice.deviceId,
+            trackId: track.trackId,
+            positionMs: position.inMilliseconds,
+            startAtHostTimeMs: startAt.millisecondsSinceEpoch,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Broadcasts the host's current *measured* playhead to every listener so
+  /// each one can re-anchor on it (listeners correct tiny drift locally; the
+  /// per-listener targeted path in [_maybeCorrectListenerDrift] is a backstop
+  /// for listeners that went quiet). Only while playing a file track — live
+  /// broadcasts have no position to correct to.
+  void _broadcastPositionReference() {
+    try {
+      final track = currentTrack;
+      if (track == null || track.isLive) return;
+      if (playbackState != PlaybackState.playing) return;
+      // The position is extrapolated to *now* so the (position, hostTime)
+      // pair is self-consistent — a raw polled position would lag the
+      // timestamp by up to a poll interval and listeners would chase it.
+      final now = DateTime.now();
+      _controlServer.broadcast(
+        ControlMessage.positionSync(
+          senderId: hostDevice.deviceId,
+          trackId: track.trackId,
+          positionMs: audioEngine.estimatePositionAt(now).inMilliseconds,
+          hostTimeMs: now.millisecondsSinceEpoch,
+        ),
+      );
+    } catch (e, st) {
+      // A reference tick must never take the host down (e.g. a socket
+      // closing mid-broadcast during teardown).
+      reportError(e, st, context: 'broadcastPositionReference');
+    }
+  }
+
+  void _startPositionSyncTimer() {
+    _positionSyncTimer?.cancel();
+    _positionSyncTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _broadcastPositionReference(),
+    );
+  }
+
+  void _stopPositionSyncTimer() {
+    _positionSyncTimer?.cancel();
+    _positionSyncTimer = null;
+  }
+
+  /// Sends a drifted listener a fresh host playhead reference so it can
+  /// re-anchor. Only meaningful while the host is playing a file track (live
+  /// broadcasts have no position to correct to) and only when the deviation
+  /// is real, so we don't chase per-sample jitter.
+  void _maybeCorrectListenerDrift(String deviceId, int listenerPositionMs) {
+    if (playbackState != PlaybackState.playing) return;
+    final track = currentTrack;
+    if (track == null || track.isLive) return;
+
+    // Interpolate to now on both sides: the listener's report is up to a
+    // poll interval old, and our own getter would be too — comparing two
+    // stale values is what makes drift detection chase quantization noise.
+    final hostPositionMs = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
+    final drift = listenerPositionMs - hostPositionMs;
+    if (drift.abs() < _maxDriftMs) return;
+
+    _controlServer.sendTo(
+      deviceId,
+      ControlMessage.positionSync(
+        senderId: hostDevice.deviceId,
+        trackId: track.trackId,
+        positionMs: hostPositionMs,
+        hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
   void _sendWelcome(String deviceId) {
+    // A late joiner converts (positionMs, hostTimeMs) into its own join
+    // position, so the pair must be self-consistent — extrapolate the
+    // playhead to the same instant hostTimeMs is stamped.
+    final now = DateTime.now();
     _controlServer.sendTo(
       deviceId,
       ControlMessage.welcome(
@@ -287,8 +524,8 @@ class HostSessionController extends ChangeNotifier {
         hostDeviceId: hostDevice.deviceId,
         currentTrack: currentTrack,
         playbackState: playbackState.toJsonValue(),
-        positionMs: position.inMilliseconds,
-        hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+        positionMs: audioEngine.estimatePositionAt(now).inMilliseconds,
+        hostTimeMs: now.millisecondsSinceEpoch,
       ),
     );
   }
@@ -309,6 +546,8 @@ class HostSessionController extends ChangeNotifier {
     await _disconnectSub?.cancel();
     await _positionSub?.cancel();
     await _stateSub?.cancel();
+    await _interruptionSub?.cancel();
+    _stopPositionSyncTimer();
     await _broadcaster.stop();
     await _controlServer.dispose();
     await _httpServer.stop();
@@ -321,8 +560,17 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> _disposeAsync() async {
-    await stop();
-    await _micBroadcaster.dispose();
+    // Release the audio engine first: just_audio_background supports a single
+    // player instance, so if a follow-up screen (e.g. joining a session right
+    // after leaving host) creates its player before this one is disposed, the
+    // old player must already be gone.
+    _stopPositionSyncTimer();
+    await _positionSub?.cancel();
+    await _stateSub?.cancel();
     await audioEngine.dispose();
+    await _micBroadcaster.dispose();
+    await _systemAudioCapture.dispose();
+    // stop() also cancels the (now already cancelled) subs again — harmless.
+    await stop();
   }
 }

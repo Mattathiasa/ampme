@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ampme streams audio over plain HTTP on the local WiFi (the host runs a
+  small HTTP server and listeners load `http://<host-lan-ip>:port/stream/...`).
+
+  SECURITY DECISION — why cleartext is permitted app-wide here:
+
+  Android's network security config matches *exact* host names/IPs only; it
+  does NOT support IP ranges or CIDR notation (e.g. 192.168.0.0/16). The
+  host's LAN address is dynamic and only known at runtime, so a static
+  allow-list of "private ranges only" is impossible in this file — listing
+  every possible 10.x/172.16-31.x/192.168.x.x address is not feasible.
+
+  The "cleartext to private ranges only, never to the public internet" policy
+  is therefore enforced in code instead, where the app has full control of
+  every URL it opens:
+
+    * lib/core/network/network_utils.dart  -> isPrivateNetworkHost()
+    * lib/utils/join_code.dart             -> join codes pointing at
+                                              non-private hosts are rejected
+    * ListenerSessionController/ControlClient -> stream URLs and control
+                                              hosts are validated before use
+
+  This file keeps the platform policy centralized and documented: base-config
+  permits cleartext (required for the audio stream to reach the host's LAN
+  IP), loopback/emulator hosts are explicitly allowed, and the app never
+  connects to non-private hosts over HTTP.
+
+  See https://developer.android.com/privacy-and-security/security-config
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+    <!-- Loopback/emulator hosts are always allowed (local dev, host-on-device). -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

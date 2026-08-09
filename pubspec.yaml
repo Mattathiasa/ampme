@@ -35,6 +35,12 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   just_audio: ^0.10.6
+  # Windows playback (WinRT MediaPlayer). Native plugin — auto-registers via
+  # windows/flutter/generated_plugin_registrant.cc, no Dart wiring needed.
+  just_audio_windows: ^0.2.3
+  # Direct dependency so main() can save/restore JustAudioPlatform.instance
+  # when just_audio_background initialization fails (see lib/main.dart).
+  just_audio_platform_interface: ^4.6.0
   web_socket_channel: ^3.0.3
   file_picker: ^11.0.3
   # 13.x pulls permission_handler_android 14, which requires compileSdk 37
@@ -50,11 +56,22 @@ dependencies:
   # QR scanning to join a session by pointing the camera at the host's code.
   mobile_scanner: ^5.2.3
   # Microphone PCM capture for the "amplify the room" live broadcast (host).
-  record: ^5.1.2
+  record: ^7.1.1
+  sentry_flutter: 9.0.0
+  audio_session: ^0.2.4
+  # Browser Web APIs (WebAudio, RTCPeerConnection) for the web host screen.
+  web: ^1.1.1
+  flutter_webrtc: ^1.6.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Image generation for the launcher icon / splash artwork (tool/generate_app_icon.dart).
+  image: ^4.8.0
+  # Generates Android launcher icons from assets/icon/app_icon.png.
+  flutter_launcher_icons: ^0.14.4
+  # Generates the Android native splash screen from assets/splash/splash.png.
+  flutter_native_splash: ^2.4.8
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -74,6 +91,26 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+# Launcher icon (regenerate with `dart run flutter_launcher_icons`).
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#140F1F"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  adaptive_icon_foreground_inset: 0
+  min_sdk_android: 23
+
+# Native splash screen (regenerate with `dart run flutter_native_splash:create`).
+flutter_native_splash:
+  color: "#140F1F"
+  image: "assets/splash/splash.png"
+  android: true
+  ios: false
+  android_12:
+    color: "#140F1F"
+    image: "assets/splash/splash.png"
 
   # To add assets to your application, add an assets section, like this:
   # assets:

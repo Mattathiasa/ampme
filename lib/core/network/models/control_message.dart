@@ -9,6 +9,7 @@ enum ControlMessageType {
   play,
   pause,
   seek,
+  positionSync,
   volume,
   clockSyncRequest,
   clockSyncResponse,
@@ -151,6 +152,27 @@ class ControlMessage {
         'trackId': trackId,
         'positionMs': positionMs,
         'startAtHostTimeMs': startAtHostTimeMs,
+      },
+    );
+  }
+
+  /// Host -> listener: a precise host playhead reference (position + the
+  /// host-clock time it was captured at). A listener that detects it has
+  /// drifted out of sync re-anchors on this instead of waiting for the next
+  /// play/seek command.
+  factory ControlMessage.positionSync({
+    required String senderId,
+    required String trackId,
+    required int positionMs,
+    required int hostTimeMs,
+  }) {
+    return ControlMessage(
+      type: ControlMessageType.positionSync,
+      senderId: senderId,
+      payload: {
+        'trackId': trackId,
+        'positionMs': positionMs,
+        'hostTimeMs': hostTimeMs,
       },
     );
   }

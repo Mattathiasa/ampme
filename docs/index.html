@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ampme — Every phone in the room, in sync</title>
+<meta name="description" content="Play audio on one phone and every phone on the same WiFi plays it back in perfect sync. No cables, no cloud. Free Android APK.">
+<meta property="og:title" content="Ampme — Every phone in the room, in sync">
+<meta property="og:description" content="Play audio on one phone and every phone on the same WiFi plays it back in perfect sync. No cables, no cloud.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%239B7BFF'/%3E%3Cstop offset='1' stop-color='%239DB38A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cg fill='%23fff'%3E%3Crect x='14' y='24' width='5.6' height='16' rx='2.8'/%3E%3Crect x='23' y='16' width='5.6' height='32' rx='2.8'/%3E%3Crect x='32' y='10' width='5.6' height='44' rx='2.8'/%3E%3Crect x='41' y='20' width='5.6' height='24' rx='2.8'/%3E%3Crect x='50' y='27' width='5.6' height='10' rx='2.8'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Ampme brand palette — matches lib/theme/app_theme.dart */
+    --purple: #7C5CE0;
+    --purple-bright: #9B7BFF;
+    --sage: #9DB38A;
+    --sage-bright: #B6CCA1;
+    --bg: #140F1F;
+    --surface: #1C1630;
+    --surface-2: #241C3B;
+    --surface-3: #2E2447;
+    --outline: #473A63;
+    --text: #EDE8F7;
+    --text-dim: #B6AECB;
+    --text-faint: #8a82a5;
+    --radius: 22px;
+    --shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.55);
+    --font-display: "Space Grotesk", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  ::selection { background: var(--purple); color: #fff; }
+
+  /* ---------- backdrop ---------- */
+  .backdrop {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(900px 480px at 15% -5%, rgba(124, 92, 224, 0.22), transparent 60%),
+      radial-gradient(800px 420px at 90% 10%, rgba(157, 179, 138, 0.12), transparent 55%),
+      radial-gradient(700px 500px at 50% 110%, rgba(124, 92, 224, 0.10), transparent 60%),
+      var(--bg);
+  }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px clamp(20px, 5vw, 64px);
+    background: rgba(20, 15, 31, 0.78);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(71, 58, 99, 0.35);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
+  .brand svg { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 4px 14px rgba(124, 92, 224, 0.45); }
+  nav .links { display: flex; align-items: center; gap: 26px; }
+  nav .links a { color: var(--text-dim); text-decoration: none; font-size: 14.5px; font-weight: 500; transition: color 0.2s; }
+  nav .links a:hover { color: var(--text); }
+  nav .btn { display: none; }
+  @media (min-width: 860px) { nav .btn { display: inline-flex; } nav .links { gap: 34px; } }
+  @media (max-width: 700px) { nav .links a:not(.btn) { display: none; } }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--font-body); font-weight: 600; font-size: 15px;
+    text-decoration: none; cursor: pointer; border: none;
+    border-radius: 15px; padding: 13px 22px;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+  .btn:active { transform: translateY(1px) scale(0.99); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--purple-bright), var(--purple));
+    color: #fff;
+    box-shadow: 0 10px 30px -8px rgba(124, 92, 224, 0.7);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 40px -8px rgba(124, 92, 224, 0.85); }
+  .btn-ghost {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--outline);
+  }
+  .btn-ghost:hover { background: var(--surface-3); transform: translateY(-2px); }
+  .btn-lg { padding: 16px 30px; font-size: 16.5px; border-radius: 17px; }
+
+  /* ---------- hero ---------- */
+  header {
+    position: relative;
+    display: grid; grid-template-columns: 1.05fr 0.95fr;
+    align-items: center; gap: 40px;
+    max-width: 1180px; margin: 0 auto;
+    padding: clamp(48px, 8vw, 110px) clamp(20px, 5vw, 64px) clamp(48px, 6vw, 80px);
+  }
+  @media (max-width: 900px) { header { grid-template-columns: 1fr; text-align: center; } }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(157, 179, 138, 0.12);
+    border: 1px solid rgba(157, 179, 138, 0.35);
+    color: var(--sage-bright);
+    font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 7px 14px; border-radius: 999px; margin-bottom: 22px;
+    text-transform: uppercase;
+  }
+  .pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sage-bright);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(38px, 5.4vw, 62px);
+    line-height: 1.06; letter-spacing: -0.03em; font-weight: 700;
+    margin-bottom: 20px;
+  }
+  h1 .grad {
+    background: linear-gradient(100deg, var(--purple-bright) 10%, #c9b8ff 45%, var(--sage-bright) 90%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lead { color: var(--text-dim); font-size: clamp(16px, 1.6vw, 19px); max-width: 540px; margin-bottom: 34px; }
+  @media (min-width: 901px) { header .col:first-child .lead { margin-right: 0; } }
+  @media (max-width: 900px) { .lead { margin-left: auto; margin-right: auto; } }
+
+  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 26px; }
+  @media (max-width: 900px) { .cta-row { justify-content: center; } }
+
+  .meta-note { color: var(--text-faint); font-size: 13.5px; }
+  .meta-note b { color: var(--text-dim); font-weight: 600; }
+
+  .stat-row {
+    display: flex; gap: 0; margin-top: 38px; padding-top: 28px;
+    border-top: 1px solid rgba(71, 58, 99, 0.4);
+    flex-wrap: wrap;
+  }
+  .stat { flex: 1; min-width: 130px; }
+  @media (max-width: 900px) { .stat-row { justify-content: center; gap: 18px; } .stat { min-width: 100px; } }
+  .stat .num { font-family: var(--font-display); font-size: 26px; font-weight: 700; color: var(--purple-bright); }
+  .stat .lbl { font-size: 12.5px; color: var(--text-faint); letter-spacing: 0.03em; text-transform: uppercase; }
+
+  /* ---------- phone mockup ---------- */
+  .phone-wrap { display: flex; justify-content: center; perspective: 1200px; }
+  .phone {
+    width: min(320px, 78vw); aspect-ratio: 9 / 19;
+    border-radius: 44px; padding: 11px;
+    background: linear-gradient(160deg, #3a2f5e, #1a1428 60%);
+    box-shadow: var(--shadow), 0 0 0 1px rgba(155, 123, 255, 0.25), 0 0 120px -30px rgba(124, 92, 224, 0.5);
+    transform: rotateY(-8deg) rotateX(2deg);
+    transition: transform 0.5s ease;
+  }
+  .phone:hover { transform: rotateY(0deg) rotateX(0deg); }
+  .screen {
+    width: 100%; height: 100%; border-radius: 34px; overflow: hidden;
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    border: 1px solid rgba(71, 58, 99, 0.6);
+  }
+  .screen .notch { height: 26px; display: flex; justify-content: center; align-items: center; }
+  .screen .notch::before { content: ""; width: 92px; height: 22px; border-radius: 14px; background: #0d0a16; }
+  .screen .appbar { padding: 8px 18px 0; font-family: var(--font-display); font-size: 16px; font-weight: 600; }
+  .screen .sub { padding: 2px 18px 12px; font-size: 11.5px; color: var(--text-faint); }
+  .screen .card {
+    margin: 8px 14px; padding: 13px 14px; border-radius: 15px;
+    background: var(--surface-2); border: 1px solid var(--outline);
+  }
+  .screen .card .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .screen .card .name { font-size: 14px; font-weight: 600; }
+  .screen .card .addr { font-size: 11px; color: var(--text-faint); font-family: monospace; }
+  .sync-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10.5px; font-weight: 700; color: var(--sage-bright);
+    background: rgba(157, 179, 138, 0.14); border: 1px solid rgba(157, 179, 138, 0.35);
+    padding: 3px 8px; border-radius: 999px;
+  }
+  .sync-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--sage-bright); animation: pulse 1.6s infinite; }
+  .screen .codebox {
+    margin: 10px 14px; padding: 11px 13px; border-radius: 13px;
+    background: var(--surface-3); border: 1px solid var(--outline);
+    font-family: monospace; font-size: 12.5px; color: var(--purple-bright);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .screen .codebox .tag { font-family: var(--font-body); font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+  .screen .eq {
+    margin-top: auto; padding: 14px 18px 22px;
+    display: flex; flex-direction: column; gap: 6px; align-items: center;
+  }
+  .screen .eq .label { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+  .eq-bars { display: flex; align-items: flex-end; gap: 4px; height: 34px; }
+  .eq-bars span {
+    width: 5px; border-radius: 3px;
+    background: linear-gradient(to top, var(--purple), var(--sage));
+    animation: eq 1.1s ease-in-out infinite;
+  }
+  .eq-bars span:nth-child(1) { animation-delay: 0s; }
+  .eq-bars span:nth-child(2) { animation-delay: 0.15s; }
+  .eq-bars span:nth-child(3) { animation-delay: 0.3s; }
+  .eq-bars span:nth-child(4) { animation-delay: 0.45s; }
+  .eq-bars span:nth-child(5) { animation-delay: 0.6s; }
+  .eq-bars span:nth-child(6) { animation-delay: 0.75s; }
+  .eq-bars span:nth-child(7) { animation-delay: 0.9s; }
+  @keyframes eq { 0%, 100% { height: 22%; } 50% { height: 100%; } }
+
+  /* ---------- sections ---------- */
+  section { max-width: 1180px; margin: 0 auto; padding: clamp(48px, 6vw, 90px) clamp(20px, 5vw, 64px); }
+
+  .section-head { max-width: 640px; margin-bottom: 48px; }
+  .kicker {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--sage-bright); margin-bottom: 12px;
+  }
+  h2 { font-family: var(--font-display); font-size: clamp(28px, 3.6vw, 42px); letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 14px; }
+  .section-head p { color: var(--text-dim); font-size: 16px; }
+
+  /* how it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  @media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    position: relative;
+    background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5);
+    border-radius: var(--radius); padding: 30px 26px;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .step:hover { transform: translateY(-5px); border-color: var(--purple); box-shadow: 0 18px 44px -18px rgba(124, 92, 224, 0.45); }
+  .step .n {
+    font-family: var(--font-display); font-size: 15px; font-weight: 700;
+    width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--purple-bright), var(--purple));
+    color: #fff; margin-bottom: 18px; box-shadow: 0 8px 20px -6px rgba(124, 92, 224, 0.6);
+  }
+  .step h3 { font-family: var(--font-display); font-size: 19px; margin-bottom: 8px; }
+  .step p { color: var(--text-dim); font-size: 14.5px; }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5);
+    border-radius: var(--radius); padding: 28px 24px;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+    background: linear-gradient(90deg, var(--purple-bright), var(--sage));
+    opacity: 0; transition: opacity 0.25s ease;
+  }
+  .card:hover { transform: translateY(-5px); border-color: rgba(155, 123, 255, 0.6); box-shadow: 0 18px 44px -18px rgba(124, 92, 224, 0.4); }
+  .card:hover::before { opacity: 1; }
+  .card .icon {
+    width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center;
+    background: var(--surface-2); border: 1px solid var(--outline);
+    margin-bottom: 16px; color: var(--purple-bright);
+  }
+  .card .icon svg { width: 23px; height: 23px; }
+  .card h3 { font-family: var(--font-display); font-size: 17.5px; margin-bottom: 8px; }
+  .card p { color: var(--text-dim); font-size: 14px; }
+  .card .tag {
+    position: absolute; top: 20px; right: 20px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--sage-bright); background: rgba(157, 179, 138, 0.13);
+    border: 1px solid rgba(157, 179, 138, 0.35); padding: 3px 9px; border-radius: 999px;
+  }
+
+  /* download */
+  .download {
+    background: linear-gradient(160deg, var(--surface-2), var(--surface) 55%);
+    border: 1px solid var(--outline); border-radius: 28px;
+    padding: clamp(34px, 5vw, 60px);
+    text-align: center; position: relative; overflow: hidden;
+  }
+  .download::before {
+    content: ""; position: absolute; inset: -40% -20% auto;
+    height: 90%; background: radial-gradient(60% 50% at 50% 0%, rgba(124, 92, 224, 0.28), transparent 70%);
+    pointer-events: none;
+  }
+  .download > * { position: relative; }
+  .download h2 { font-size: clamp(28px, 3.4vw, 40px); }
+  .download .sub { color: var(--text-dim); max-width: 560px; margin: 0 auto 30px; }
+  .variant-picker { display: inline-flex; gap: 6px; background: var(--bg); border: 1px solid var(--outline); border-radius: 13px; padding: 5px; margin-bottom: 26px; flex-wrap: wrap; justify-content: center; }
+  .variant-picker button {
+    font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--text-dim); background: transparent; border: none; border-radius: 9px;
+    padding: 9px 14px; transition: all 0.2s ease;
+  }
+  .variant-picker button:hover { color: var(--text); }
+  .variant-picker button.active { background: var(--purple); color: #fff; box-shadow: 0 6px 16px -6px rgba(124, 92, 224, 0.7); }
+  .dl-note { color: var(--text-faint); font-size: 13px; margin-top: 16px; }
+  .dl-note a { color: var(--sage-bright); }
+  .reqs {
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 30px;
+  }
+  .req {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--bg); border: 1px solid var(--outline); border-radius: 999px;
+    padding: 8px 15px; font-size: 13px; color: var(--text-dim);
+  }
+  .req svg { width: 15px; height: 15px; color: var(--sage-bright); }
+
+  /* faq */
+  .faq { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px 26px; }
+  @media (max-width: 760px) { .faq { grid-template-columns: 1fr; } }
+  .faq details { background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5); border-radius: 16px; padding: 18px 20px; transition: border-color 0.2s; }
+  .faq details:hover { border-color: var(--outline); }
+  .faq summary { cursor: pointer; font-family: var(--font-display); font-weight: 600; font-size: 15.5px; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; font-size: 20px; color: var(--purple-bright); transition: transform 0.2s; }
+  .faq details[open] summary::after { transform: rotate(45deg); }
+  .faq details p { color: var(--text-dim); font-size: 14px; margin-top: 10px; }
+
+  /* footer */
+  footer {
+    border-top: 1px solid rgba(71, 58, 99, 0.4);
+    padding: 38px clamp(20px, 5vw, 64px);
+    max-width: 1180px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    color: var(--text-faint); font-size: 13.5px;
+  }
+  footer .brand svg { width: 26px; height: 26px; border-radius: 7px; }
+  footer a { color: var(--text-dim); text-decoration: none; transition: color 0.2s; }
+  footer a:hover { color: var(--purple-bright); }
+
+  /* reveal on scroll */
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.visible { opacity: 1; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    .reveal { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+
+<nav>
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="ng" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9B7BFF"/><stop offset="1" stop-color="#9DB38A"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#ng)"/><g fill="#fff"><rect x="14" y="24" width="5.6" height="16" rx="2.8"/><rect x="23" y="16" width="5.6" height="32" rx="2.8"/><rect x="32" y="10" width="5.6" height="44" rx="2.8"/><rect x="41" y="20" width="5.6" height="24" rx="2.8"/><rect x="50" y="27" width="5.6" height="10" rx="2.8"/></g></svg>
+    Ampme
+  </div>
+  <div class="links">
+    <a href="#how">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#faq">FAQ</a>
+    <a class="btn btn-primary" href="#download">Download APK</a>
+  </div>
+</nav>
+
+<header>
+  <div class="col">
+    <span class="pill"><span class="dot"></span> Now on Android</span>
+    <h1>Every phone in the room,<br><span class="grad">playing the same beat.</span></h1>
+    <p class="lead">Play audio on one device — every phone on the same WiFi plays it back in perfect sync. No cables, no cloud, no account. Your music, your friends, one speaker-everywhere.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary btn-lg" href="#download">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        Download APK
+      </a>
+      <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
+    </div>
+    <p class="meta-note"><b>Free</b> · <b>Android 10+</b> · <b>37 MB</b> · open source</p>
+
+    <div class="stat-row">
+      <div class="stat"><div class="num">0</div><div class="lbl">Cloud servers</div></div>
+      <div class="stat"><div class="num">~30&thinsp;ms</div><div class="lbl">Drift correction</div></div>
+      <div class="stat"><div class="num">1</div><div class="lbl">Tap to host</div></div>
+      <div class="stat"><div class="num">100%</div><div class="lbl">On your WiFi</div></div>
+    </div>
+  </div>
+
+  <div class="col phone-wrap">
+    <div class="phone">
+      <div class="screen">
+        <div class="notch"></div>
+        <div class="appbar">Join a session</div>
+        <div class="sub">Nearby sessions on your network</div>
+        <div class="card">
+          <div class="row"><span class="name">🎧 Living room party</span><span class="sync-badge"><span class="dot"></span>in sync</span></div>
+          <div class="addr">192.168.1.42:54213</div>
+        </div>
+        <div class="card">
+          <div class="row"><span class="name">🌙 Late-night vibes</span><span class="sync-badge"><span class="dot"></span>in sync</span></div>
+          <div class="addr">192.168.1.53:54213</div>
+        </div>
+        <div class="codebox"><span class="tag">or enter a code</span><span>192.168.1.42:54213</span></div>
+        <div class="eq">
+          <div class="eq-bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="label">playing in sync</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="how">
+  <div class="section-head reveal">
+    <div class="kicker">How it works</div>
+    <h2>Sync without the cloud</h2>
+    <p>Ampme turns one phone into a tiny local media server. The rest is timing — the good kind.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal">
+      <div class="n">1</div>
+      <h3>Host a session</h3>
+      <p>Pick a song — or broadcast any audio your phone is playing, from any app. Your device serves the audio straight over your WiFi.</p>
+    </div>
+    <div class="step reveal">
+      <div class="n">2</div>
+      <h3>Friends join</h3>
+      <p>Sessions appear automatically on nearby phones, or join by code / QR. A control channel links every listener to the host.</p>
+    </div>
+    <div class="step reveal">
+      <div class="n">3</div>
+      <h3>Stay perfectly in sync</h3>
+      <p>An NTP-style clock sync estimates the offset between devices. Playback fires from a precise timer — and a ~30&thinsp;ms drift correction keeps it locked, song after song.</p>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="section-head reveal">
+    <div class="kicker">Features</div>
+    <h2>Built for real listening rooms</h2>
+    <p>Everything runs on your local network. Nothing is uploaded, logged, or monetized.</p>
+  </div>
+  <div class="grid">
+    <div class="card reveal">
+      <span class="tag">New</span>
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M7 10v4"/><path d="M12 8v8"/><path d="M17 11v2"/></svg></div>
+      <h3>Broadcast device audio</h3>
+      <p>Whatever your phone is playing — Spotify, YouTube, a game, a video — gets streamed to every listener. No file selection needed.</p>
+    </div>
+    <div class="card reveal">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg></div>
+      <h3>Amplify the room</h3>
+      <p>Broadcast your microphone live — lectures, singalongs, commentary — on every platform, instantly.</p>
+    </div>
+    <div class="card reveal">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+      <h3>Tight sync, all night</h3>
+      <p>Clock-offset estimation plus continuous drift correction keep phones within ~30&thinsp;ms of each other — inaudible, even on beats.</p>
+    </div>
+    <div class="card reveal">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg></div>
+      <h3>No cloud, no account</h3>
+      <p>Audio never leaves your WiFi. Private by design — there's no server to trust, no sign-up, no tracking.</p>
+    </div>
+    <div class="card reveal">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a7 7 0 0 1 14 0"/><path d="M8 12.5a3.5 3.5 0 0 1 8 0"/><circle cx="12" cy="17" r="1.5"/></svg></div>
+      <h3>Auto-discovery</h3>
+      <p>Nearby sessions show up on their own via UDP beacon. Join with one tap — no typing IP addresses.</p>
+    </div>
+    <div class="card reveal">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <h3>Join by code or QR</h3>
+      <p>Type the host's code or point your camera at the QR — connected in seconds, even when discovery can't reach.</p>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="download reveal">
+    <div class="kicker">Get it</div>
+    <h2>Download Ampme for Android</h2>
+    <p class="sub">Side-loadable APK — no Play Store required. Pick the build for your phone, install, and start the party.</p>
+
+    <div class="variant-picker" id="variantPicker" role="group" aria-label="APK variant">
+      <button class="active" data-variant="arm64">Most phones · 37 MB</button>
+      <button data-variant="armv7">Older phones · 28 MB</button>
+      <button data-variant="universal">Universal · 102 MB</button>
+    </div>
+
+    <div>
+      <a id="downloadBtn" class="btn btn-primary btn-lg" href="#">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        Download <span id="dlLabel">arm64 APK</span>
+      </a>
+    </div>
+    <p class="dl-note">Running Android 10 or newer on a 64-bit phone? <b>Most phones · 37 MB</b> is the one. Unsure? Grab the <a href="#" id="universalLink">universal build</a> — it works on everything.</p>
+
+    <div class="reqs">
+      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Android 10+</span>
+      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Same WiFi network</span>
+      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Free forever</span>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="section-head reveal">
+    <div class="kicker">FAQ</div>
+    <h2>Questions, answered</h2>
+  </div>
+  <div class="faq">
+    <details class="reveal" open>
+      <summary>Why can't I find it on the Play Store?</summary>
+      <p>Ampme is a from-scratch side project, distributed directly as an APK for now. That keeps it free and lets you install it in seconds — just allow "install unknown apps" for your browser or file manager when Android asks.</p>
+    </details>
+    <details class="reveal">
+      <summary>Does everyone need the app?</summary>
+      <p>Yes — each phone runs Ampme and joins the host's session. The host broadcasts over WiFi; listeners just need the app (and the host's code, or auto-discovery finds them).</p>
+    </details>
+    <details class="reveal">
+      <summary>Does it work over the internet?</summary>
+      <p>No. Sessions are local-network only — all devices must be on the same WiFi (or one phone's hotspot). That's the trade-off that makes perfect sync and zero cloud possible.</p>
+    </details>
+    <details class="reveal">
+      <summary>Why "Android 10+" for device audio?</summary>
+      <p>Broadcasting what your phone is playing uses Android's MediaProjection capture API (introduced in Android 10). Older Android versions can still host file-based and microphone sessions.</p>
+    </details>
+    <details class="reveal">
+      <summary>Can I broadcast Spotify?</summary>
+      <p>Mostly yes — but some apps (Spotify among them) can opt out of audio playback capture, in which case you'll capture silence. DRM-protected streams are always excluded. File playback and the microphone work with everything.</p>
+    </details>
+    <details class="reveal">
+      <summary>What about Windows, macOS, or web?</summary>
+      <p>The app also runs on Windows (host or listener) and in the browser (join, or host via WebRTC). iOS can join too when available. This page currently ships the Android build — the same release contains everything else.</p>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="fg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9B7BFF"/><stop offset="1" stop-color="#9DB38A"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#fg)"/><g fill="#fff"><rect x="14" y="24" width="5.6" height="16" rx="2.8"/><rect x="23" y="16" width="5.6" height="32" rx="2.8"/><rect x="32" y="10" width="5.6" height="44" rx="2.8"/><rect x="41" y="20" width="5.6" height="24" rx="2.8"/><rect x="50" y="27" width="5.6" height="10" rx="2.8"/></g></svg>
+    Ampme
+  </div>
+  <span>Open source · built with Flutter · <span id="year"></span></span>
+  <a href="#" id="githubLink">Source on GitHub ↗</a>
+</footer>
+
+<script>
+/* ================================================================
+   CONFIG — edit these two lines, then push to GitHub. That's it.
+   ----------------------------------------------------------------
+   GITHUB_USER : your GitHub username (the part before github.io)
+   GITHUB_REPO : the repository name that hosts this page
+   ================================================================ */
+const GITHUB_USER = "Mattathiasa";
+const GITHUB_REPO = "ampme";
+
+const REPO = `https://github.com/${GITHUB_USER}/${GITHUB_REPO}`;
+const REL = `${REPO}/releases/latest/download`;
+
+const VARIANTS = {
+  // asset filenames must match what you attach to the GitHub Release
+  arm64:     { file: "ampme-arm64-v8a.apk",     label: "arm64 APK",     size: "37 MB"  },
+  armv7:     { file: "ampme-armeabi-v7a.apk",   label: "armeabi-v7a APK", size: "28 MB" },
+  universal: { file: "ampme.apk",               label: "universal APK",  size: "102 MB" },
+};
+
+function currentVariant() {
+  const active = document.querySelector("#variantPicker button.active");
+  return active ? active.dataset.variant : "arm64";
+}
+
+function refreshDownload() {
+  const v = VARIANTS[currentVariant()];
+  const btn = document.getElementById("downloadBtn");
+  btn.href = `${REL}/${v.file}`;
+  document.getElementById("dlLabel").textContent = v.label;
+}
+
+document.querySelectorAll("#variantPicker button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#variantPicker button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    refreshDownload();
+  });
+});
+
+document.getElementById("universalLink").addEventListener("click", () => {
+  document.querySelectorAll("#variantPicker button").forEach((b) => b.classList.toggle("active", b.dataset.variant === "universal"));
+  refreshDownload();
+});
+
+// If the page is served from GitHub Pages we can also derive the repo link
+// automatically; otherwise fall back to the configured repo.
+const githubLink = document.getElementById("githubLink");
+const canonical = document.querySelector('meta[property="og:url"]');
+if (location.hostname.endsWith("github.io") && !location.hostname.startsWith("YOUR_USERNAME")) {
+  const [user, repo] = [location.hostname.split(".")[0], location.pathname.split("/")[1] || GITHUB_REPO];
+  githubLink.href = `https://github.com/${user}/${repo}`;
+} else {
+  githubLink.href = REPO;
+}
+
+document.getElementById("year").textContent = new Date().getFullYear();
+
+// reveal on scroll
+const io = new IntersectionObserver((entries) => {
+  entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+refreshDownload();
+</script>
+</body>
+</html>

@@ -1,8 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/permissions/app_permissions.dart';
+import '../../utils/platform_info.dart';
 import '../host/widgets/transport_controls.dart';
 import 'join_view_model.dart';
 import 'widgets/qr_scanner_screen.dart';
@@ -123,7 +123,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
                       label: const Text('Join'),
                     ),
                   ),
-                  if (!kIsWeb) ...[
+                  // QR scanning needs a camera (mobile_scanner has no
+                  // Windows/Linux implementation), so it's hidden on desktop.
+                  if (supportsQrScanning()) ...[
                     const SizedBox(width: 12),
                     Expanded(
                       child: OutlinedButton.icon(
@@ -222,7 +224,7 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
 
   Future<void> _scanQr(BuildContext context, JoinViewModel viewModel) async {
     FocusScope.of(context).unfocus();
-    final granted = await AppPermissions.requestCameraAccess();
+    final granted = await AppPermissions.requestCameraAccess(context: context);
     if (!context.mounted) return;
     if (!granted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -246,6 +248,10 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (session.isReconnecting) ...[
+          const _ReconnectingBanner(),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             CircleAvatar(
@@ -262,7 +268,39 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           ],
         ),
         const SizedBox(height: 16),
-        SyncStatusBadge(offsetMs: session.clockOffsetMs, roundTripMs: session.roundTripMs),
+        if (session.isLiveSession)
+          // Live streams (mic broadcast / web-hosted WebRTC) have no clock
+          // sync or position to measure, so show a live chip instead.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.fiber_manual_record,
+                  size: 14,
+                  color: theme.colorScheme.secondary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Live stream',
+                  style: TextStyle(
+                    color: theme.colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          SyncStatusBadge(
+            offsetMs: session.clockOffsetMs,
+            roundTripMs: session.roundTripMs,
+          ),
         const SizedBox(height: 16),
         Card(
           child: Padding(
@@ -296,6 +334,42 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           label: const Text('Leave session'),
         ),
       ],
+    );
+  }
+}
+
+/// Shown while the control connection to the host is being re-established
+/// after a transient drop (WiFi blip, host briefly backgrounded).
+class _ReconnectingBanner extends StatelessWidget {
+  const _ReconnectingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final orange = dark ? const Color(0xFFFFB74D) : const Color(0xFFE65100);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: orange.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Connection lost — reconnecting…',
+              style: TextStyle(color: orange, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -28,12 +28,38 @@ abstract class AudioEngine {
 
   Future<void> seek(Duration position);
 
-  /// Pre-buffers/seeks to [position] immediately, then fires playback so
-  /// the audible start lines up with the wall-clock instant [at] as
-  /// closely as possible. If [at] has already passed, seeks to
-  /// `position + (now - at)` and plays immediately (a "catch-up seek")
-  /// instead of just starting from [position].
+  /// Seeks to [position] and waits (generously bounded) until the player has
+  /// buffered enough to start producing audio immediately. Call after
+  /// loading so a follow-up [scheduleStart] can fire exactly on its target
+  /// instant instead of waiting on the network mid-command.
+  Future<void> prepareForStart(Duration position);
+
+  /// Pre-buffers/seeks to [position] immediately, waits until the player is
+  /// actually ready to emit audio, then fires playback so the audible start
+  /// lines up with the wall-clock instant [at] as closely as possible. If
+  /// [at] has already passed (or buffering ate the whole lead), seeks to
+  /// `position + (now - at)` and plays immediately (a "catch-up seek").
   Future<void> scheduleStart({required DateTime at, Duration position = Duration.zero});
+
+  /// The player's current playhead position, fresher than any cached UI
+  /// state (used for drift measurement between host and listeners).
+  ///
+  /// Note this is quantized to the platform's position-update grid
+  /// (≈250ms on Android), so it is only accurate to within that interval.
+  Duration get currentPosition;
+
+  /// Estimated playhead at wall-clock instant [t], extrapolated from the most
+  /// recent position update at the player's nominal rate.
+  ///
+  /// Position updates arrive on a coarse grid, so pairing a raw
+  /// [currentPosition] with a fresh wall-clock timestamp yields a reference
+  /// that's systematically up to a poll interval "behind" — exactly the kind
+  /// of bias that makes drift-correction loops chase themselves. While
+  /// playing, this extrapolates smoothly (accurate to a few ms); while paused
+  /// it returns the frozen playhead. Prefer it over [currentPosition]
+  /// whenever a timestamp-consistent position is needed (host references,
+  /// listener drift checks, status reports).
+  Duration estimatePositionAt(DateTime t);
 
   Future<void> setVolume(double volume);
 
