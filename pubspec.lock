@@ -154,7 +154,7 @@ packages:
     source: hosted
     version: "1.0.9"
   dart_webrtc:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: dart_webrtc
       sha256: f6d615bddea5e458ce180a914f3055c234ffb52fb7397a51b3491e76d6d7edb2
@@ -680,6 +680,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.0"
+  realtime_client:
+    dependency: "direct main"
+    description:
+      name: realtime_client
+      sha256: ff731ce21fd775e0d7accfb1eaccdcf47b687610720822ba8b9fd8f5bccb2bd9
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.13.0"
   record:
     dependency: "direct main"
     description:
@@ -853,6 +861,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  supabase_common:
+    dependency: transitive
+    description:
+      name: supabase_common
+      sha256: a7961a44953cf8d9da049381fc3377516348255042fbb12b9d4f8540816f2fe9
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.2"
   synchronized:
     dependency: transitive
     description:

@@ -4,8 +4,8 @@
 /// and a UDP discovery beacon — all built on `dart:io`, which the browser
 /// doesn't provide. On web this resolves to [host_screen_web.dart], which
 /// hosts differently: it plays the picked file with WebAudio and streams it
-/// to listeners over WebRTC via the LAN relay (`tool/web_relay.dart`). On
-/// native it resolves to the real [HostScreen].
+/// to listeners over WebRTC (signaled through Supabase Realtime, or the LAN
+/// relay). On native it resolves to the real [HostScreen].
 library;
 
-export 'host_screen.dart' if (dart.library.html) 'host_screen_web.dart';
+export 'host_screen.dart' if (dart.library.js_interop) 'host_screen_web.dart';

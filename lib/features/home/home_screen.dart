@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
@@ -5,8 +6,37 @@ import '../../widgets/amp_logo.dart';
 import '../host/host_gate.dart';
 import '../join/join_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+/// The join code carried by the URL the web app was opened with
+/// (`…/web/?join=AMP-7KQ4ZD`), if any. Always null outside the browser.
+String? launchJoinCode() {
+  if (!kIsWeb) return null;
+  final code = Uri.base.queryParameters['join']?.trim();
+  return code == null || code.isEmpty ? null : code;
+}
+
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Opened from a join link: go straight to joining. Pushed (rather than
+    // replacing home) so Back still lands on the home screen.
+    final code = launchJoinCode();
+    if (code != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => JoinScreen(initialCode: code)),
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,10 +90,16 @@ class HomeScreen extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.wifi, size: 16, color: scheme.onSurfaceVariant),
+                      Icon(
+                        kIsWeb ? Icons.link : Icons.wifi,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
                       const SizedBox(width: 6),
                       Text(
-                        'Works over local WiFi — no cables, no cloud.',
+                        kIsWeb
+                            ? 'Host from your browser — friends join with a code or link.'
+                            : 'Works over local WiFi — no cables, no cloud.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),

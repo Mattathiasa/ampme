@@ -2,8 +2,10 @@
 
 import 'package:ampme/core/network/network_utils.dart';
 
-// Web Relay — the LAN rendezvous point that lets a browser-hosted Ampme
-// session signal (and be reached by) native listeners.
+// Web Relay — the *no-internet* rendezvous point for browser-hosted Ampme
+// sessions. By default the web app signals through Supabase Realtime (see
+// lib/core/network/signaling/), which works from any page; this relay is the
+// fully-local alternative ("Advanced: use a LAN relay" on the host screen).
 //
 // Browsers can only make *outbound* connections, so a web host can't run the
 // audio/control server a native host does. This tiny program fixes that:
@@ -102,12 +104,11 @@ Ampme web relay running.
   Landing page:      http://$hostDisplay:$port/
   Web app:           http://$hostDisplay:$port/web/  ${!hasApp ? '(no web build found — run flutter build web once)' : ''}
 
-To use it:
-  1. Open http://$hostDisplay:$port on the hosting machine's browser
-     (the landing page; the web app lives at /web/).
-  2. Click "Open the web app" — that page hosts the session; native Ampme
-     apps join it by entering the code it shows (relay address + code,
-     e.g. $hostDisplay:$port/AMP-XXXX).
+To use it (no internet needed):
+  1. Open http://$hostDisplay:$port/web/ in a browser on this network.
+  2. Host a Session -> "Advanced: use a LAN relay" -> enter $hostDisplay:$port
+     -> Start on LAN relay. Listeners join with the code it shows
+     (e.g. $hostDisplay:$port/AMP-XXXXXX) or by scanning its QR code.
 
 Note: the web app must be opened over plain HTTP (not HTTPS) to reach LAN
 hosts — browsers block "mixed content" otherwise (this is also why the
@@ -199,45 +200,71 @@ Future<void> _serveStatic(HttpRequest request, List<_StaticRoot> roots) async {
     await response.close();
     return;
   }
-  response.headers.contentType = ContentType(
-    'application',
-    _extensionToMime(file.path),
-  );
+  response.headers.contentType = contentTypeFor(file.path);
+  if (isNoCachePath(file.path)) {
+    response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+  }
   await response.addStream(file.openRead());
   await response.close();
 }
 
-String _extensionToMime(String path) {
+/// The `Content-Type` to serve [path] with. Browsers act on these: an HTML
+/// page served as anything but `text/html` is downloaded instead of shown,
+/// stylesheets must be `text/css`, and `application/wasm` is required for
+/// streaming WebAssembly compilation (CanvasKit).
+ContentType contentTypeFor(String path) {
   final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
   switch (ext) {
     case 'html':
-      return 'html';
+    case 'htm':
+      return ContentType.html;
     case 'js':
-      return 'javascript';
+    case 'mjs':
+      return ContentType('text', 'javascript', charset: 'utf-8');
     case 'css':
-      return 'css';
+      return ContentType('text', 'css', charset: 'utf-8');
     case 'json':
-      return 'json';
+      return ContentType.json;
+    case 'txt':
+      return ContentType.text;
     case 'png':
-      return 'png';
+      return ContentType('image', 'png');
     case 'jpg':
     case 'jpeg':
-      return 'jpeg';
+      return ContentType('image', 'jpeg');
+    case 'gif':
+      return ContentType('image', 'gif');
+    case 'ico':
+      return ContentType('image', 'x-icon');
     case 'svg':
-      return 'svg+xml';
+      return ContentType('image', 'svg+xml');
     case 'wasm':
-      return 'wasm';
+      return ContentType('application', 'wasm');
     case 'otf':
-      return 'font-otf';
+      return ContentType('font', 'otf');
     case 'ttf':
-      return 'font-ttf';
+      return ContentType('font', 'ttf');
     case 'woff':
-      return 'font-woff';
+      return ContentType('font', 'woff');
     case 'woff2':
-      return 'font-woff2';
+      return ContentType('font', 'woff2');
+    case 'apk':
+      return ContentType('application', 'vnd.android.package-archive');
     default:
-      return 'octet-stream';
+      return ContentType.binary;
   }
+}
+
+/// Whether [path] must be revalidated on every load: the entry points that
+/// reference the (content-versioned) rest of a Flutter web build. Without
+/// this a rebuilt app can keep loading a stale bootstrap from cache.
+bool isNoCachePath(String path) {
+  final name = path.split('/').last;
+  return name.endsWith('.html') ||
+      name == 'flutter_bootstrap.js' ||
+      name == 'flutter_service_worker.js' ||
+      name == 'version.json' ||
+      name == 'manifest.json';
 }
 
 /// Routes signaling messages between one host and its listeners.
