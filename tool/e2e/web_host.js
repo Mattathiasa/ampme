@@ -11,9 +11,10 @@
 //   OUT          directory for screenshots
 //   TIMEOUT_S    overall limit (default 900)
 //
-// Passes (exit 0) when a listener joined, the peer connection reached
-// `connected`, audio bytes flowed, and the listener sent RTCP receiver
-// reports (proof it is actually receiving).
+// Passes (exit 0) when a listener joined and, while the peer connection was
+// `connected`, audio bytes flowed and the listener sent RTCP receiver reports
+// (proof it is actually receiving). The final state doesn't matter: the
+// listener device may already be gone when the host is told to stop.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -130,20 +131,20 @@ async function stats(page) {
 
     let first = null;
     let last = null;
+    let receiving = null; // latest sample: connected + receiver reports
     while (!fs.existsSync(STOP_FILE) && Date.now() - started < TIMEOUT_MS) {
       await page.waitForTimeout(2000);
       last = await stats(page);
       if (!first && last.bytesSent > 0) first = last;
+      if (last.states.includes('connected') && last.remoteInbound) receiving = last;
       log('stats', JSON.stringify(last));
     }
     await page.screenshot({ path: path.join(OUT, 'web-host.png') });
     result.first = first;
+    result.receiving = receiving;
     result.last = last;
     result.pass = Boolean(
-      last &&
-      last.states.includes('connected') &&
-      first && last.bytesSent - first.bytesSent > 20000 &&
-      last.remoteInbound,
+      first && receiving && receiving.bytesSent - first.bytesSent > 20000,
     );
   } catch (e) {
     result.error = e.message;
