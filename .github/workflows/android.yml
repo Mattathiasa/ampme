@@ -6,10 +6,10 @@
 #            installs the x86_64 APK, joins the session by code and checks the
 #            stream plays through Android's media audio path.
 #   release  only for a push whose commit message contains [release-apks], or
-#            a manual run with the `release` input ticked:
-#            commits the arm APKs to release/ and creates a *draft* GitHub
-#            Release with all three (publish it to update the landing page's
-#            download buttons).
+#            a manual run with the `release` input ticked, and only after
+#            build + e2e pass: commits the arm APKs to release/ and publishes
+#            the GitHub Release v<pubspec version> with all three APKs as the
+#            latest release (the landing page's download buttons serve it).
 #
 # Release signing: add repository secrets ANDROID_KEYSTORE_BASE64 (the .jks,
 # base64-encoded), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without
@@ -21,11 +21,13 @@ name: Android
 # no separate pull_request trigger (it would run the emulator job twice).
 on:
   push:
-    paths-ignore: ['**.md']
+    # The landing page (docs/index.html) doesn't affect the app; docs/web
+    # does (the e2e job hosts from it), so it still triggers.
+    paths-ignore: ['**.md', 'docs/index.html']
   workflow_dispatch:
     inputs:
       release:
-        description: Commit the APKs to release/ and create a draft GitHub Release
+        description: Commit the APKs to release/ and publish the GitHub Release
         type: boolean
         default: false
 
@@ -172,7 +174,8 @@ jobs:
           git add release/
           git commit -m "Update release APKs (CI run ${{ github.run_id }}) [skip ci]"
           git push origin "HEAD:${{ github.ref_name }}"
-      - name: Create a draft GitHub Release
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -191,10 +194,14 @@ jobs:
           - **ampme.apk** — universal, works everywhere (larger)
           NOTES
           TAG="v$VERSION"
+          # Upload into a draft first so the release never goes public with
+          # missing assets, then publish it as the latest release.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk --clobber
           else
-            gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+            gh release create "$TAG" --draft --target "$RELEASE_SHA" \
               --title "Ampme v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
               apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk
           fi
+          gh release edit "$TAG" --draft=false --latest
+          gh release view "$TAG" --json tagName,isDraft,url,assets --jq '{tag: .tagName, draft: .isDraft, url, assets: [.assets[].name]}'
