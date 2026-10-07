@@ -60,21 +60,39 @@ ui > "$OUT/android-joined.xml"
 adb logcat -d > "$OUT/logcat.txt"
 adb shell dumpsys audio > "$OUT/dumpsys-audio.txt"
 
-if grep -E "FATAL EXCEPTION|AndroidRuntime: Process: $PKG" "$OUT/logcat.txt"; then
-  echo "FAIL: the app crashed" >&2
+# Everything below avoids `cmd | grep -q` / `grep -m1` pipelines: those exit
+# early, the producer gets SIGPIPE, and with `pipefail` the pipeline "fails"
+# (silently aborting the script under `set -e`). Capture, then match.
+LOGCAT=$(cat "$OUT/logcat.txt")
+CRASH=$(grep -E "FATAL EXCEPTION|AndroidRuntime: Process: $PKG" <<<"$LOGCAT" || true)
+if [ -n "$CRASH" ]; then
+  echo "FAIL: the app crashed:" >&2
+  echo "$CRASH" >&2
   exit 1
 fi
+echo "--- app errors in logcat (flutter / WebRTC), if any:"
+grep -iE "flutter.*(error|exception)|webrtc.*(error|fail)" <<<"$LOGCAT" | tail -n 20 || true
 
-UID_=$(adb shell dumpsys package "$PKG" | grep -m1 -o 'userId=[0-9]*' | cut -d= -f2)
-PLAYERS=$(grep -E "AudioPlaybackConfiguration.*u/pid:$UID_/" "$OUT/dumpsys-audio.txt" || true)
-echo "Audio players for $PKG (uid $UID_):"
-echo "${PLAYERS:-<none>}"
+PKG_LINE=$(adb shell pm list packages -U "$PKG" | tr -d '\r')
+UID_=$(sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' <<<"$PKG_LINE" | sed -n 1p)
+echo "--- $PKG uid: ${UID_:-<unknown>}"
 
-if ! echo "$PLAYERS" | grep -E "state:started" | grep -q "usage=USAGE_MEDIA"; then
+AUDIO=$(tr -d '\r' < "$OUT/dumpsys-audio.txt")
+PLAYERS=$(grep -E "AudioPlaybackConfiguration.*u/pid:${UID_:-none}/" <<<"$AUDIO" || true)
+echo "--- audio players for $PKG:"
+if [ -n "$PLAYERS" ]; then
+  echo "$PLAYERS"
+else
+  echo "<none> — all players on the device:"
+  grep -E "AudioPlaybackConfiguration" <<<"$AUDIO" | head -n 40 || true
+fi
+
+STARTED=$(grep -E "state:started" <<<"$PLAYERS" || true)
+if ! grep -q "usage=USAGE_MEDIA" <<<"$STARTED"; then
   echo "FAIL: no started USAGE_MEDIA player — WebRTC audio isn't playing as media" >&2
   exit 1
 fi
-if echo "$PLAYERS" | grep -E "state:started" | grep -q "USAGE_VOICE_COMMUNICATION"; then
+if grep -q "USAGE_VOICE_COMMUNICATION" <<<"$STARTED"; then
   echo "FAIL: audio is playing on the voice-call path" >&2
   exit 1
 fi
