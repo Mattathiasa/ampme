@@ -111,6 +111,7 @@ class TransportControls extends StatelessWidget {
               iconSize: 44,
               padding: const EdgeInsets.all(12),
               color: Colors.white,
+              tooltip: isPlaying ? 'Pause' : 'Play',
               onPressed: isPlaying ? pauseHandler : playHandler,
               icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
             ),

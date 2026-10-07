@@ -43,6 +43,13 @@ abstract class ActiveSession extends ChangeNotifier {
   /// Round-trip time of the clock-sync exchange, when available.
   int? get roundTripMs;
 
+  /// True when the browser blocked audio autoplay and playback needs a tap
+  /// ([unlockAudio]) to start. Always false outside the browser.
+  bool get needsAudioUnlock;
+
+  /// Starts audio the browser refused to autoplay. Call from a tap handler.
+  Future<void> unlockAudio();
+
   /// Sets this device's local playback volume without affecting other devices.
   Future<void> setLocalVolume(double value);
 }
