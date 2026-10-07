@@ -5,7 +5,8 @@
 #            over the real Supabase signaling, then boots an Android emulator,
 #            installs the x86_64 APK, joins the session by code and checks the
 #            stream plays through Android's media audio path.
-#   release  only for a push whose commit message contains [release-apks]:
+#   release  only for a push whose commit message contains [release-apks], or
+#            a manual run with the `release` input ticked:
 #            commits the arm APKs to release/ and creates a *draft* GitHub
 #            Release with all three (publish it to update the landing page's
 #            download buttons).
@@ -22,6 +23,11 @@ on:
   push:
     paths-ignore: ['**.md']
   workflow_dispatch:
+    inputs:
+      release:
+        description: Commit the APKs to release/ and create a draft GitHub Release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -146,7 +152,9 @@ jobs:
 
   release:
     needs: [build, e2e]
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release-apks]')
+    if: >-
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-apks]')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
