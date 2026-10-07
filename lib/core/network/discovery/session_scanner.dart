@@ -7,4 +7,4 @@
 library;
 
 export 'session_listener_scanner.dart'
-    if (dart.library.html) 'session_listener_scanner_web.dart';
+    if (dart.library.js_interop) 'session_listener_scanner_web.dart';

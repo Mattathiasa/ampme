@@ -523,16 +523,15 @@
   <div class="download reveal">
     <div class="kicker">Web app</div>
     <h2>Try Ampme in your browser</h2>
-    <p class="sub">The full app runs on the web too — host a session with WebRTC streaming (30–80&thinsp;ms on a LAN) or join any session. No install; works on Windows, Mac, Chromebook, and phones.</p>
+    <p class="sub">Host a session right in your browser — WebRTC streaming, 30–80&thinsp;ms on a LAN — and friends join with a code, a link, or by scanning the QR code. No install; works on Windows, Mac, Chromebook, and phones.</p>
     <div>
       <a class="btn btn-primary btn-lg" href="web/">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18"/><path d="M12 3a15 15 0 0 0 0 18"/></svg>
         Open the web app
       </a>
     </div>
-    <p class="dl-note">Browsers block secure (HTTPS) pages from reaching devices on your WiFi, so this hosted preview renders the app while the live host &amp; join flow runs from your LAN. One command on any computer on the same network:</p>
-    <div class="web-cmd"><span>dart run tool/web_relay.dart</span></div>
-    <div class="web-note">Then open <b>http://&lt;lan-ip&gt;:8080</b> (the relay prints it), click <b>Open the web app</b>, and host — friends join by the code it shows, from the browser or the native apps.</div>
+    <p class="dl-note">Open it, tap <b>Host a Session</b>, pick a song, and share the <b>AMP-XXXXXX</b> code. Audio flows device-to-device; only the connection handshake goes through the internet.</p>
+    <div class="web-note">No internet at the party? Run <b>dart run tool/web_relay.dart</b> on any computer on the WiFi, open the <b>http://&lt;lan-ip&gt;:8080/web/</b> address it prints, and pick <b>Advanced: use a LAN relay</b> when hosting.</div>
   </div>
 </section>
 
@@ -552,7 +551,7 @@
     </details>
     <details class="reveal">
       <summary>Does it work over the internet?</summary>
-      <p>No. Sessions are local-network only — all devices must be on the same WiFi (or one phone's hotspot). That's the trade-off that makes perfect sync and zero cloud possible.</p>
+      <p>Phone-hosted sessions are local-network only — all devices on the same WiFi (or one phone's hotspot); that's what makes their sample-tight sync possible with zero cloud. Sessions hosted from the <a href="web/">web app</a> connect through a lightweight internet handshake, so listeners can join from anywhere with the code — the audio itself still streams device-to-device.</p>
     </details>
     <details class="reveal">
       <summary>Why "Android 10+" for device audio?</summary>

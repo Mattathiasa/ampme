@@ -62,6 +62,13 @@ dependencies:
   # Browser Web APIs (WebAudio, RTCPeerConnection) for the web host screen.
   web: ^1.1.1
   flutter_webrtc: ^1.6.0
+  # flutter_webrtc's web implementation; imported directly (web build only) to
+  # reach the browser MediaStream behind a remote WebRTC track so it can be
+  # played through an <audio> element.
+  dart_webrtc: ^1.8.1
+  # Supabase Realtime broadcast — cloud signaling (WebRTC handshake only) for
+  # browser-hosted sessions, so they work from any origin without a LAN relay.
+  realtime_client: ^2.13.0
 
 dev_dependencies:
   flutter_test:

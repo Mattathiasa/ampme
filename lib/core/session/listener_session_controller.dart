@@ -95,6 +95,14 @@ class ListenerSessionController extends ChangeNotifier
   @override
   bool hostLeft = false;
 
+  /// Native-hosted streams play through just_audio, which is started from
+  /// the scheduled-start timer; there's no separate unlock step.
+  @override
+  bool get needsAudioUnlock => false;
+
+  @override
+  Future<void> unlockAudio() async {}
+
   /// Sets this device's local playback volume without affecting other devices.
   @override
   Future<void> setLocalVolume(double value) async {

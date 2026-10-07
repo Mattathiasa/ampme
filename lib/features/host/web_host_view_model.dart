@@ -1,11 +1,16 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../core/network/signaling/cloud_signaling_channel.dart';
+import '../../core/network/signaling/relay_signaling_channel.dart';
+import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/observability/reporting.dart';
+import '../../utils/join_code.dart';
 import 'web_host_controller.dart';
 
 /// UI-facing wrapper around [WebHostController] for the web host screen:
-/// session start, file picking (bytes on web), and error surfacing.
+/// session start (cloud or LAN relay), file picking (bytes on web), and
+/// error surfacing.
 class WebHostViewModel extends ChangeNotifier {
   WebHostViewModel() : hostController = WebHostController() {
     hostController.addListener(notifyListeners);
@@ -16,50 +21,119 @@ class WebHostViewModel extends ChangeNotifier {
   bool isStarting = false;
   bool isPickingFile = false;
 
-  bool get isRunning => hostController.sessionCode.isNotEmpty;
+  bool get isRunning => hostController.isRunning;
 
-  /// [relayAddress] is optional and defaults to the page's own origin (the
-  /// relay that served it).
-  Future<void> startSession(
-    String sessionName, {
-    String? relayAddress,
+  /// Starts a session signaled through the cloud (Supabase Realtime): works
+  /// from any page, and listeners join with just the `AMP-` code or link.
+  Future<void> startCloudSession(String sessionName) {
+    final code = generateCloudSessionCode();
+    final name = _nameOrDefault(sessionName);
+    return _start(
+      signaling: CloudSignalingChannel(
+        code: code,
+        role: SignalingRole.host,
+        selfId: CloudSignalingChannel.hostId,
+        sessionName: name,
+      ),
+      name: name,
+      code: code,
+      joinCode: code,
+      joinLink: buildJoinLink(Uri.base, code),
+    );
+  }
+
+  /// Starts a session signaled through a LAN relay at [relayAddress]
+  /// (`ip:port`, as printed by `dart run tool/web_relay.dart`). No internet
+  /// needed, but the page must be served over plain HTTP.
+  Future<void> startRelaySession(String sessionName, String relayAddress) {
+    final address = parseJoinCode(relayAddress);
+    if (address == null) {
+      hostController.errorMessage =
+          'Enter the relay address as ip:port (e.g. 192.168.1.10:8080).';
+      notifyListeners();
+      return Future.value();
+    }
+    final code = generateCloudSessionCode();
+    final name = _nameOrDefault(sessionName);
+    final joinCode = '${address.host}:${address.port}/$code';
+    return _start(
+      signaling: RelaySignalingChannel(
+        relayHost: address.host,
+        relayPort: address.port,
+        code: code,
+        role: SignalingRole.host,
+        selfId: 'host',
+        sessionName: name,
+      ),
+      name: name,
+      code: code,
+      joinCode: joinCode,
+      // The relay serves the web app at /web/, so the link opens the LAN
+      // copy (plain HTTP — required to reach the relay) and joins.
+      joinLink: Uri(
+        scheme: 'http',
+        host: address.host,
+        port: address.port,
+        path: '/web/',
+        queryParameters: {'join': joinCode},
+      ).toString(),
+    );
+  }
+
+  Future<void> _start({
+    required SignalingChannel signaling,
+    required String name,
+    required String code,
+    required String joinCode,
+    String? joinLink,
   }) async {
     isStarting = true;
+    hostController.errorMessage = null;
     notifyListeners();
     try {
-      var relayHost = relayAddress;
-      var relayPort = 8080;
-      if (relayAddress != null && relayAddress.isNotEmpty) {
-        final parts = relayAddress.split(':');
-        if (parts.length == 2) {
-          relayHost = parts[0];
-          relayPort = int.tryParse(parts[1]) ?? 8080;
-        }
-      }
-      await hostController.start(sessionName, relayHost: relayHost, relayPort: relayPort);
+      await hostController.start(
+        signaling: signaling,
+        name: name,
+        code: code,
+        joinCode: joinCode,
+        joinLink: joinLink,
+      );
+    } on SignalingException catch (e) {
+      hostController.errorMessage = 'Couldn’t start the session: ${e.message}';
     } catch (e, st) {
-      hostController.errorMessage = 'Failed to start session: $e';
+      hostController.errorMessage = 'Couldn’t start the session: $e';
       reportError(e, st, context: 'webHost.startSession');
-      hostController.notifyListeners();
     } finally {
       isStarting = false;
       notifyListeners();
     }
   }
 
+  String _nameOrDefault(String name) =>
+      name.trim().isEmpty ? 'Ampme session' : name.trim();
+
   Future<void> pickAndLoadTrack() async {
     isPickingFile = true;
     notifyListeners();
     try {
-      final result = await FilePicker.pickFiles(type: FileType.audio);
+      // withData: the browser has no file paths, only bytes — and
+      // file_picker 11 defaults to not reading them, which made picking a
+      // song silently do nothing.
+      final result = await FilePicker.pickFiles(
+        type: FileType.audio,
+        withData: true,
+      );
       final picked = result?.files.single;
-      final bytes = picked?.bytes;
-      if (bytes == null || picked == null) return;
+      if (picked == null) return; // cancelled
+      final bytes = picked.bytes;
+      if (bytes == null) {
+        hostController.errorMessage = 'Could not read that file.';
+        return;
+      }
       await hostController.loadTrack(bytes, picked.name);
     } catch (e, st) {
       hostController.errorMessage = 'Failed to load track: $e';
       reportError(e, st, context: 'webHost.pickTrack');
-      hostController.notifyListeners();
     } finally {
       isPickingFile = false;
       notifyListeners();

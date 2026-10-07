@@ -1,3 +1,5 @@
+import 'dart:math';
+
 /// A parsed host address a listener can connect to.
 class HostAddress {
   const HostAddress({required this.host, required this.port});
@@ -118,4 +120,80 @@ WebSessionAddress? parseWebSessionCode(String input) {
     relayPort: port,
     code: code,
   );
+}
+
+/// Characters used in cloud session codes: uppercase letters and digits
+/// without the easily-confused ones (0/O, 1/I/L).
+const _cloudCodeAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/// Length of the random part of a cloud session code. Cloud sessions share a
+/// single global namespace, so this is longer than the 4-character LAN relay
+/// codes: 31^6 ≈ 887M combinations.
+const cloudCodeLength = 6;
+
+final _cloudCodePattern = RegExp(r'^AMP-[A-Z0-9]{6}$');
+
+/// Generates a fresh cloud session code, e.g. `AMP-7KQ4ZD`.
+String generateCloudSessionCode([Random? random]) {
+  final rng = random ?? Random.secure();
+  final suffix = List.generate(
+    cloudCodeLength,
+    (_) => _cloudCodeAlphabet[rng.nextInt(_cloudCodeAlphabet.length)],
+  ).join();
+  return 'AMP-$suffix';
+}
+
+/// Parses a cloud (internet-signaled) session code, or returns `null` if
+/// [input] isn't one. Accepts, case-insensitively:
+///
+/// - the bare code: `AMP-7KQ4ZD` (also without the dash: `AMP7KQ4ZD`)
+/// - a join link: `https://…/web/?join=AMP-7KQ4ZD`
+///
+/// Returns the normalized (uppercase, dashed) code.
+String? parseCloudSessionCode(String input) {
+  var raw = input.trim();
+  if (raw.isEmpty) return null;
+
+  if (raw.contains('://') || raw.contains('?')) {
+    final uri = Uri.tryParse(raw);
+    final join = uri?.queryParameters['join'];
+    if (join == null || join.isEmpty) return null;
+    raw = join.trim();
+  }
+
+  var code = raw.toUpperCase();
+  if (code.startsWith('AMP') && !code.startsWith('AMP-')) {
+    code = 'AMP-${code.substring(3)}';
+  }
+  return _cloudCodePattern.hasMatch(code) ? code : null;
+}
+
+/// Public copy of the web app, used for join links when the host page itself
+/// isn't reachable by other devices (e.g. `flutter run` on localhost).
+/// Override with `--dart-define=PUBLIC_WEB_APP_URL=https://…/`.
+const publicWebAppUrl = String.fromEnvironment(
+  'PUBLIC_WEB_APP_URL',
+  defaultValue: 'https://mattathiasa.github.io/ampme/web/',
+);
+
+/// Builds the shareable link that opens the web app and joins [code].
+///
+/// [pageUrl] is the hosting page's own URL. A page on a loopback address
+/// (`flutter run`, a local server) can't be opened by other devices, so the
+/// link points at [publicWebAppUrl] instead — cloud codes work from any copy
+/// of the app.
+String buildJoinLink(Uri pageUrl, String code) {
+  final host = pageUrl.host.toLowerCase();
+  final isLoopback =
+      host == 'localhost' || host == '127.0.0.1' || host == '::1' || host.isEmpty;
+  final base = isLoopback || !pageUrl.hasScheme || !pageUrl.scheme.startsWith('http')
+      ? Uri.parse(publicWebAppUrl)
+      : pageUrl;
+  return Uri(
+    scheme: base.scheme,
+    host: base.host,
+    port: base.hasPort ? base.port : null,
+    path: base.path.isEmpty ? '/' : base.path,
+    queryParameters: {'join': code},
+  ).toString();
 }

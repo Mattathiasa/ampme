@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import '../../core/network/discovery/session_scanner.dart';
 import '../../core/network/models/device_info.dart';
 import '../../core/network/network_utils.dart';
+import '../../core/network/signaling/cloud_signaling_channel.dart';
+import '../../core/network/signaling/relay_signaling_channel.dart';
+import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
@@ -11,6 +14,18 @@ import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../utils/join_code.dart';
 import '../../utils/platform_info.dart';
+
+/// Whether this is the web build served over HTTPS (e.g. GitHub Pages).
+/// Browsers block such pages from opening plain `ws://`/`http://`
+/// connections to LAN devices (mixed content), so LAN-only join paths are
+/// rejected up front with an explanation instead of failing obscurely.
+bool get _isSecureWebPage => kIsWeb && Uri.base.scheme == 'https';
+
+const _lanFromHttpsMessage =
+    'This copy of the web app is served over HTTPS, and browsers block it '
+    'from reaching devices on your WiFi. Ask the host for an AMP- code '
+    '(hosted from the web app), use the Ampme Android/Windows app, or open '
+    'the web app from the LAN relay (dart run tool/web_relay.dart).';
 
 /// Wraps session discovery (browsing "nearby sessions") and, once the
 /// user picks one, the [ListenerSessionController] that actually joins
@@ -62,31 +77,67 @@ class JoinViewModel extends ChangeNotifier {
   Future<void> join(DiscoveredSession discovered) =>
       _connect(hostIp: discovered.beacon.hostIp, controlPort: discovered.beacon.controlPort);
 
-  /// Join by a code the host displays. Two formats are accepted:
+  /// Join by a code the host displays. Three formats are accepted, tried in
+  /// this order:
   ///
+  /// - web-hosted session (cloud): `AMP-7KQ4ZD`, or a join link
+  ///   `https://…/web/?join=AMP-7KQ4ZD` — joined over WebRTC, signaled via
+  ///   Supabase Realtime (works from anywhere, HTTPS pages included);
+  /// - web-hosted session (LAN relay): `192.168.1.10:8080/AMP-4821` (relay
+  ///   address + session token) — joined over WebRTC via the LAN relay;
   /// - native session: `192.168.1.5:54213` (an `ampme://join?...` link, or
-  ///   `http://ip:port`), joined over WebSocket/HTTP;
-  /// - web-hosted session: `192.168.1.10:8080/AMP-4821` (relay address +
-  ///   session token), joined over WebRTC via the LAN relay.
+  ///   `http://ip:port`), joined over WebSocket/HTTP.
   ///
   /// This is the only join path available on web, where UDP discovery isn't
   /// possible.
   Future<void> joinByCode(String code) async {
-    // Web-hosted sessions first: their code has a `/token` after the port.
+    final cloudCode = parseCloudSessionCode(code);
+    if (cloudCode != null) {
+      await _connectWebSession(
+        CloudSignalingChannel(
+          code: cloudCode,
+          role: SignalingRole.listener,
+          selfId: selfDevice.deviceId,
+          deviceName: selfDevice.deviceName,
+        ),
+      );
+      return;
+    }
+
+    // LAN-relay web sessions: their code has a `/token` after the port.
     final webSession = parseWebSessionCode(code);
     if (webSession != null) {
+      if (_isSecureWebPage) {
+        errorMessage = _lanFromHttpsMessage;
+        notifyListeners();
+        return;
+      }
       if (!isPrivateNetworkHost(webSession.relayHost)) {
         errorMessage = 'That relay isn’t on a private network — Ampme only works over local WiFi.';
         notifyListeners();
         return;
       }
-      await _connectWebSession(webSession);
+      await _connectWebSession(
+        RelaySignalingChannel(
+          relayHost: webSession.relayHost,
+          relayPort: webSession.relayPort,
+          code: webSession.code,
+          role: SignalingRole.listener,
+          selfId: selfDevice.deviceId,
+          deviceName: selfDevice.deviceName,
+        ),
+      );
       return;
     }
 
     final address = parseJoinCode(code);
     if (address == null) {
       errorMessage = 'That doesn’t look like a valid session code.';
+      notifyListeners();
+      return;
+    }
+    if (_isSecureWebPage) {
+      errorMessage = _lanFromHttpsMessage;
       notifyListeners();
       return;
     }
@@ -100,22 +151,25 @@ class JoinViewModel extends ChangeNotifier {
     await _connect(hostIp: address.host, controlPort: address.port);
   }
 
-  /// Joins a browser-hosted session through the LAN signaling relay.
-  Future<void> _connectWebSession(WebSessionAddress address) async {
+  /// Joins a browser-hosted session over [signaling] (cloud or LAN relay).
+  Future<void> _connectWebSession(SignalingChannel signaling) async {
     isConnecting = true;
     errorMessage = null;
     notifyListeners();
+    WebRtcListenerController? controller;
     try {
       await stopScanning();
-      final controller = WebRtcListenerController(selfDevice: selfDevice);
+      controller = WebRtcListenerController(selfDevice: selfDevice);
       controller.addListener(notifyListeners);
-      await controller.connect(
-        relayHost: address.relayHost,
-        relayPort: address.relayPort,
-        code: address.code,
-      );
+      await controller.connect(signaling);
       session = controller;
+    } on SignalingException catch (e) {
+      controller?.removeListener(notifyListeners);
+      controller?.dispose();
+      errorMessage = e.message;
     } catch (e, st) {
+      controller?.removeListener(notifyListeners);
+      controller?.dispose();
       errorMessage = 'Failed to join web session: $e';
       reportError(e, st, context: 'joinWebSession');
     } finally {
@@ -149,6 +203,11 @@ class JoinViewModel extends ChangeNotifier {
   /// host or other listeners).
   Future<void> setVolume(double value) async {
     await session?.setLocalVolume(value);
+  }
+
+  /// Starts audio the browser refused to autoplay (call from a tap).
+  Future<void> unlockAudio() async {
+    await session?.unlockAudio();
   }
 
   Future<void> leave() async {

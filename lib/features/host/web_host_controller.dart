@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/network/models/playback_state.dart';
 import '../../core/network/models/track_info.dart';
+import '../../core/network/signaling/signaling_channel.dart';
+import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
-import '../../utils/id_generator.dart';
 
 /// How far (in seconds) the host's *local* audible playback is delayed behind
 /// the audio source when listeners are connected, so the host hears itself at
@@ -17,18 +16,10 @@ import '../../utils/id_generator.dart';
 /// network + jitter-buffer latency). No delay when nobody is listening.
 const double _listenerLeadSeconds = 0.06;
 
-/// Browser-side host for a web-hosted session. The browser can't run the
-/// HTTP/WebSocket servers a native host runs, so instead it:
-///
-/// 1. Decodes a local audio file with WebAudio and plays it locally,
-/// 2. Routes the same audio through a `MediaStreamDestination`, and
-/// 3. Streams that track to every joined listener over WebRTC — signaled via
-///    the LAN relay (`tool/web_relay.dart`), which both sides connect to
-///    outbound.
-///
-/// WebRTC keeps listener latency to roughly 30-80ms on a LAN (Opus 20ms +
-/// NetEQ jitter buffer), which is the closest browsers can get to the
-/// native file-streaming path. Sessions are live: no seeking on listeners.
+/// How long a listener's peer connection may sit in the transient
+/// `disconnected` state before it's dropped from the session.
+const Duration _disconnectGrace = Duration(seconds: 10);
+
 /// Minimal typed views over the JS `RTCIceCandidateEvent` / `RTCIceCandidate`
 /// objects, which package:web doesn't declare.
 extension type _RtcIceEvent._(JSObject _) implements JSObject {
@@ -41,15 +32,36 @@ extension type _RtcIceCandidate._(JSObject _) implements JSObject {
   external int? get sdpMLineIndex;
 }
 
+/// Browser-side host for a web-hosted session. The browser can't run the
+/// HTTP/WebSocket servers a native host runs, so instead it:
+///
+/// 1. Decodes a local audio file with WebAudio and plays it locally,
+/// 2. Routes the same audio through a `MediaStreamDestination`, and
+/// 3. Streams that track to every joined listener over WebRTC, exchanging
+///    the handshake over a [SignalingChannel] — Supabase Realtime (works
+///    from any page, the default) or the LAN relay (`tool/web_relay.dart`).
+///
+/// WebRTC keeps listener latency to roughly 30-80ms on a LAN (Opus 20ms +
+/// NetEQ jitter buffer), which is the closest browsers can get to the
+/// native file-streaming path. Sessions are live: no seeking on listeners.
 class WebHostController extends ChangeNotifier {
   WebHostController();
 
-  // ---- Session identity / relay ----
+  // ---- Session identity ----
+  /// Empty until a session has started (and again after [end]).
   String sessionCode = '';
   String sessionName = '';
-  String relayHost = '';
-  int relayPort = 8080;
-  String? joinCode; // "192.168.1.10:8080/AMP-4821"
+
+  /// What listeners type to join: `AMP-7KQ4ZD` (cloud) or
+  /// `192.168.1.10:8080/AMP-7KQ4ZD` (LAN relay).
+  String? joinCode;
+
+  /// A link that opens the web app and joins directly (QR / share).
+  String? joinLink;
+
+  /// Set when the signaling connection drops mid-session: listeners already
+  /// connected keep playing (WebRTC is direct), new ones can't join.
+  bool signalingLost = false;
 
   // ---- Track / playback ----
   TrackInfo? currentTrack;
@@ -72,13 +84,15 @@ class WebHostController extends ChangeNotifier {
   double _startOffsetMs = 0;
   Timer? _positionTimer;
 
-  // ---- Relay connection ----
-  WebSocketChannel? _channel;
-  StreamSubscription? _sub;
-  Completer<void>? _started;
+  // ---- Signaling ----
+  SignalingChannel? _signaling;
+  StreamSubscription<Map<String, dynamic>>? _messagesSub;
+  StreamSubscription<void>? _droppedSub;
+  JSFunction? _pageHideListener;
 
   // ---- WebRTC peers (listenerId -> connection) ----
   final Map<String, web.RTCPeerConnection> _pcs = {};
+  final Map<String, Timer> _disconnectTimers = {};
 
   /// Listener ids whose remote description has been applied — until then,
   /// their ICE candidates are buffered ([_pendingIce]) because
@@ -87,58 +101,46 @@ class WebHostController extends ChangeNotifier {
   final Map<String, List<Map<String, dynamic>>> _pendingIce = {};
 
   String? errorMessage;
+  bool _disposed = false;
 
-  /// Resolves to `relayHost:relayPort` from the page's own origin when the
-  /// page is served by the relay (the normal setup), so the join code shown
-  /// to listeners is correct without any input.
-  static String defaultRelayHost() => web.window.location.host;
+  bool get isRunning => sessionCode.isNotEmpty;
 
-  /// Starts a session: connects to the relay and registers this page as the
-  /// host for a fresh session code. [relayHost]/[relayPort] default to the
-  /// page's origin (i.e. the relay that served it).
-  Future<void> start(
-    String name, {
-    String? relayHost,
-    int? relayPort,
+  /// Starts a session over [signaling]. Resolves once the signaling service
+  /// accepted this page as the host; throws (leaving the controller idle) if
+  /// it can't be reached.
+  Future<void> start({
+    required SignalingChannel signaling,
+    required String name,
+    required String code,
+    required String joinCode,
+    String? joinLink,
   }) async {
+    if (isRunning) await end();
     errorMessage = null;
-    sessionName = name;
-    if (relayHost != null && relayHost.isNotEmpty) {
-      this.relayHost = relayHost;
-      if (relayPort != null) this.relayPort = relayPort;
-    } else {
-      final host = web.window.location.hostname;
-      final port = web.window.location.port;
-      this.relayHost = host.isEmpty ? 'localhost' : host;
-      this.relayPort = port.isEmpty ? 8080 : int.tryParse(port) ?? 8080;
-    }
-
-    sessionCode = 'AMP-${generateId().substring(0, 4).toUpperCase()}';
-    joinCode = '$relayHost:$relayPort/$sessionCode';
-
-    final channel = WebSocketChannel.connect(
-      Uri.parse('ws://$relayHost:$relayPort/ws'),
-    );
-    _channel = channel;
-    final started = Completer<void>();
-    _started = started;
-    _sub = channel.stream.listen(
-      _handleMessage,
-      onDone: () => _handleRelayClosed(),
-      onError: (_) => _handleRelayClosed(),
-      cancelOnError: false,
-    );
-    _send({
-      'type': 'host',
-      'code': sessionCode,
-      'sessionName': sessionName,
+    signalingLost = false;
+    _signaling = signaling;
+    _messagesSub = signaling.messages.listen(_handleMessage);
+    _droppedSub = signaling.disconnected.listen((_) {
+      if (!isRunning) return;
+      signalingLost = true;
+      _notify();
     });
-    notifyListeners();
-    await started.future.timeout(const Duration(seconds: 10));
+    try {
+      await signaling.connect();
+    } catch (_) {
+      await _teardownSignaling();
+      rethrow;
+    }
+    sessionName = name;
+    sessionCode = code;
+    this.joinCode = joinCode;
+    this.joinLink = joinLink;
+    _installPageHideHook();
+    _notify();
   }
 
   /// Decodes [bytes] (an audio file the user picked) and makes it the
-  /// session's track.
+  /// session's track. Any track already playing is stopped.
   Future<void> loadTrack(Uint8List bytes, String fileName) async {
     errorMessage = null;
     try {
@@ -147,6 +149,7 @@ class WebHostController extends ChangeNotifier {
       // exactly the file bytes (file_picker views may be offset/sliced).
       final copy = Uint8List.fromList(bytes);
       final buffer = await ctx.decodeAudioData(copy.buffer.toJS).toDart;
+      _stopSource();
       _buffer = buffer;
       _destination ??= ctx.createMediaStreamDestination();
       _gain ??= ctx.createGain()
@@ -167,11 +170,11 @@ class WebHostController extends ChangeNotifier {
       );
       position = Duration.zero;
       playbackState = PlaybackState.stopped;
-      notifyListeners();
+      _notify();
     } catch (e, st) {
       errorMessage = 'Could not decode that audio file: $e';
       reportError(e, st, context: 'webHost.loadTrack');
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -183,13 +186,15 @@ class WebHostController extends ChangeNotifier {
       if (ctx.state == 'suspended') {
         await ctx.resume().toDart;
       }
-      _startSource(position);
+      // Finished? Start over instead of "playing" from the very end.
+      final atEnd = position.inMilliseconds >= (buffer.duration * 1000).round();
+      _startSource(atEnd ? Duration.zero : position);
       playbackState = PlaybackState.playing;
-      notifyListeners();
+      _notify();
     } catch (e, st) {
       errorMessage = 'Playback failed: $e';
       reportError(e, st, context: 'webHost.play');
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -201,7 +206,7 @@ class WebHostController extends ChangeNotifier {
         await ctx.suspend().toDart;
       }
       playbackState = PlaybackState.paused;
-      notifyListeners();
+      _notify();
     } catch (e, st) {
       reportError(e, st, context: 'webHost.pause');
     }
@@ -212,13 +217,13 @@ class WebHostController extends ChangeNotifier {
     if (playbackState == PlaybackState.playing) {
       _startSource(target);
     }
-    notifyListeners();
+    _notify();
   }
 
   Future<void> setVolume(double value) async {
     volume = value;
     _gain?.gain.value = value;
-    notifyListeners();
+    _notify();
   }
 
   /// Starts a fresh [web.AudioBufferSourceNode] at [offset]. The local
@@ -230,14 +235,7 @@ class WebHostController extends ChangeNotifier {
     final destination = _destination;
     if (ctx == null || buffer == null || destination == null) return;
 
-    final old = _source;
-    _source = null;
-    try {
-      old?.stop();
-      old?.disconnect();
-    } catch (_) {
-      // Already stopped/disconnected.
-    }
+    _stopSource();
 
     final source = ctx.createBufferSource()
       ..buffer = buffer
@@ -246,9 +244,10 @@ class WebHostController extends ChangeNotifier {
     source.onended = ((web.Event _) {
       if (_source == source) {
         _source = null;
+        _positionTimer?.cancel();
         playbackState = PlaybackState.stopped;
         position = Duration(milliseconds: (buffer.duration * 1000).round());
-        notifyListeners();
+        _notify();
       }
     }).toJS;
 
@@ -258,6 +257,21 @@ class WebHostController extends ChangeNotifier {
     source.start(_startCtxTime, offset.inMilliseconds / 1000.0);
     _source = source;
     _startPositionTimer();
+  }
+
+  /// Stops the current source node (if any) without firing its end handler.
+  void _stopSource() {
+    final old = _source;
+    _source = null;
+    _positionTimer?.cancel();
+    _positionTimer = null;
+    if (old == null) return;
+    try {
+      old.stop();
+      old.disconnect();
+    } catch (_) {
+      // Already stopped/disconnected.
+    }
   }
 
   void _startPositionTimer() {
@@ -272,36 +286,25 @@ class WebHostController extends ChangeNotifier {
       final next = Duration(milliseconds: elapsedMs.round());
       final changed = next.inSeconds != position.inSeconds;
       position = next;
-      if (changed) notifyListeners();
+      if (changed) _notify();
     });
   }
 
-  // ---- Relay protocol ----
+  // ---- Signaling protocol ----
 
-  void _handleMessage(dynamic data) {
-    if (data is! String) return;
-    final Map<String, dynamic> message;
-    try {
-      message = jsonDecode(data) as Map<String, dynamic>;
-    } catch (_) {
-      return;
-    }
+  void _handleMessage(Map<String, dynamic> message) {
     switch (message['type']) {
-      case 'welcome':
-        _started?.complete();
-        _started = null;
       case 'listener-joined':
         final id = message['id'] as String?;
         if (id == null) return;
         _listeners[id] = message['deviceName'] as String? ?? 'Unknown device';
-        notifyListeners();
-        unawaited(_connectPeer(id));
+        _notify();
+        // A re-join (same id) replaces the old connection.
+        unawaited(_closePeer(id).then((_) => _connectPeer(id)));
       case 'listener-left':
         final id = message['id'] as String?;
         if (id == null) return;
-        _listeners.remove(id);
-        unawaited(_closePeer(id));
-        notifyListeners();
+        _dropListener(id);
       case 'answer':
         final from = message['from'] as String?;
         final sdp = message['sdp'] as String?;
@@ -311,36 +314,24 @@ class WebHostController extends ChangeNotifier {
         final from = message['from'] as String?;
         if (from == null) return;
         unawaited(_applyIceCandidate(from, message));
-      case 'end':
-      case 'error':
-        break; // handled via relay close / errors below
       default:
         break;
     }
   }
 
-  void _handleRelayClosed() {
-    final started = _started;
-    if (started != null && !started.isCompleted) {
-      started.completeError(StateError('Could not reach the relay.'));
-      _started = null;
-    }
-    // The session can keep running without the relay once peers are
-    // connected (WebRTC is direct); new listeners just can't join.
-  }
-
   Future<void> _connectPeer(String id) async {
     final destination = _destination;
-    if (destination == null) return;
+    if (destination == null) return; // offered once a track is loaded
     try {
-      final pc = web.RTCPeerConnection();
+      final config = <String, Object?>{'iceServers': iceServers()}.jsify()
+          as web.RTCConfiguration;
+      final pc = web.RTCPeerConnection(config);
       _pcs[id] = pc;
       pc.onicecandidate = ((web.Event event) {
         final candidate = _candidateOf(event);
         if (candidate == null) return; // gathering complete
-        _send({
+        _signaling?.send({
           'type': 'ice',
-          'code': sessionCode,
           'to': id,
           'candidate': candidate.candidate,
           'sdpMid': candidate.sdpMid,
@@ -348,11 +339,19 @@ class WebHostController extends ChangeNotifier {
         });
       }).toJS;
       pc.onconnectionstatechange = ((web.Event _) {
-        final state = pc.connectionState;
-        if (state == 'failed' || state == 'closed' || state == 'disconnected') {
-          _listeners.remove(id);
-          _pcs.remove(id);
-          notifyListeners();
+        if (_pcs[id] != pc) return; // superseded by a newer connection
+        switch (pc.connectionState) {
+          case 'connected':
+            _disconnectTimers.remove(id)?.cancel();
+          case 'disconnected':
+            // Usually transient; give ICE a chance to recover.
+            _disconnectTimers[id] ??= Timer(
+              _disconnectGrace,
+              () => _dropListener(id),
+            );
+          case 'failed':
+          case 'closed':
+            _dropListener(id);
         }
       }).toJS;
 
@@ -369,16 +368,11 @@ class WebHostController extends ChangeNotifier {
             web.RTCLocalSessionDescriptionInit(type: offer.type, sdp: offer.sdp),
           )
           .toDart;
-      _send({
-        'type': 'offer',
-        'code': sessionCode,
-        'to': id,
-        'sdp': offer.sdp,
-      });
+      _signaling?.send({'type': 'offer', 'to': id, 'sdp': offer.sdp});
     } catch (e, st) {
       errorMessage = 'Listener connection failed: $e';
       reportError(e, st, context: 'webHost.connectPeer');
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -409,9 +403,9 @@ class WebHostController extends ChangeNotifier {
     Map<String, dynamic> message,
   ) async {
     final pc = _pcs[from];
-    if (pc == null) return;
-    if (!_remoteSet.contains(from)) {
-      // Remote description not applied yet — hold the candidate.
+    if (pc == null || !_remoteSet.contains(from)) {
+      // Remote description not applied yet (or the peer is still being
+      // created) — hold the candidate.
       (_pendingIce[from] ??= []).add(message);
       return;
     }
@@ -430,7 +424,16 @@ class WebHostController extends ChangeNotifier {
     }
   }
 
+  void _dropListener(String id) {
+    final removed = _listeners.remove(id) != null;
+    unawaited(_closePeer(id));
+    if (removed) _notify();
+  }
+
   Future<void> _closePeer(String id) async {
+    _disconnectTimers.remove(id)?.cancel();
+    _remoteSet.remove(id);
+    _pendingIce.remove(id);
     final pc = _pcs.remove(id);
     if (pc == null) return;
     try {
@@ -452,37 +455,87 @@ class WebHostController extends ChangeNotifier {
     return (candidate: c.candidate, sdpMid: c.sdpMid, sdpMLineIndex: c.sdpMLineIndex);
   }
 
-  /// Ends the session: tells listeners over the relay, then tears down
-  /// everything.
+  /// Tells listeners the session is over if the tab is closed or navigated
+  /// away (best-effort: the page may be gone before the message leaves).
+  void _installPageHideHook() {
+    _removePageHideHook();
+    final listener = ((web.Event _) {
+      _signaling?.send({'type': 'end'});
+    }).toJS;
+    _pageHideListener = listener;
+    web.window.addEventListener('pagehide', listener);
+  }
+
+  void _removePageHideHook() {
+    final listener = _pageHideListener;
+    _pageHideListener = null;
+    if (listener != null) {
+      web.window.removeEventListener('pagehide', listener);
+    }
+  }
+
+  /// Ends the session: tells listeners, tears everything down, and returns
+  /// the controller to its idle state so a new session can be started.
   Future<void> end() async {
-    _send({'type': 'end', 'code': sessionCode});
-    _positionTimer?.cancel();
-    _positionTimer = null;
+    _signaling?.send({'type': 'end'});
+    _removePageHideHook();
+    _stopSource();
+    for (final timer in _disconnectTimers.values) {
+      timer.cancel();
+    }
+    _disconnectTimers.clear();
     for (final pc in _pcs.values) {
       try {
         pc.close();
       } catch (_) {}
     }
     _pcs.clear();
+    _remoteSet.clear();
+    _pendingIce.clear();
     _listeners.clear();
-    await _sub?.cancel();
-    _sub = null;
-    await _channel?.sink.close();
-    _channel = null;
+
+    sessionCode = '';
+    joinCode = null;
+    joinLink = null;
+    signalingLost = false;
+    currentTrack = null;
+    _buffer = null;
+    position = Duration.zero;
     playbackState = PlaybackState.stopped;
-    notifyListeners();
+
+    final ctx = _ctx;
+    _ctx = null;
+    _destination = null;
+    _gain = null;
+    _notify();
+
+    await _teardownSignaling();
+    if (ctx != null) {
+      try {
+        await ctx.close().toDart;
+      } catch (_) {
+        // Already closed.
+      }
+    }
   }
 
-  void _send(Map<String, dynamic> message) {
-    try {
-      _channel?.sink.add(jsonEncode(message));
-    } catch (_) {
-      // Relay gone; peers already connected keep playing.
-    }
+  Future<void> _teardownSignaling() async {
+    await _messagesSub?.cancel();
+    _messagesSub = null;
+    await _droppedSub?.cancel();
+    _droppedSub = null;
+    final signaling = _signaling;
+    _signaling = null;
+    await signaling?.close();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     unawaited(end());
     super.dispose();
   }

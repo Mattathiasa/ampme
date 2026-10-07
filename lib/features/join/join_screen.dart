@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../../core/permissions/app_permissions.dart';
 import '../../utils/platform_info.dart';
-import '../../widgets/web_serving_notice.dart';
 import '../host/widgets/transport_controls.dart';
 import 'join_view_model.dart';
 import 'widgets/qr_scanner_screen.dart';
@@ -11,19 +10,25 @@ import 'widgets/session_list_tile.dart';
 import 'widgets/sync_status_badge.dart';
 
 class JoinScreen extends StatelessWidget {
-  const JoinScreen({super.key});
+  const JoinScreen({super.key, this.initialCode});
+
+  /// A code to join straight away — set when the app was opened from a
+  /// join link (`…/web/?join=AMP-XXXXXX`).
+  final String? initialCode;
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => JoinViewModel(),
-      child: const _JoinScreenBody(),
+      child: _JoinScreenBody(initialCode: initialCode),
     );
   }
 }
 
 class _JoinScreenBody extends StatefulWidget {
-  const _JoinScreenBody();
+  const _JoinScreenBody({this.initialCode});
+
+  final String? initialCode;
 
   @override
   State<_JoinScreenBody> createState() => _JoinScreenBodyState();
@@ -35,8 +40,17 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
   @override
   void initState() {
     super.initState();
+    final initialCode = widget.initialCode?.trim();
+    if (initialCode != null && initialCode.isNotEmpty) {
+      _codeController.text = initialCode;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<JoinViewModel>().startScanning();
+      final viewModel = context.read<JoinViewModel>();
+      if (initialCode != null && initialCode.isNotEmpty) {
+        viewModel.joinByCode(initialCode);
+      } else {
+        viewModel.startScanning();
+      }
     });
   }
 
@@ -103,12 +117,12 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const WebServingNotice(),
               TextField(
                 controller: _codeController,
+                textCapitalization: TextCapitalization.characters,
                 decoration: const InputDecoration(
                   labelText: 'Join by code',
-                  hintText: 'e.g. 192.168.1.5:54213',
+                  hintText: 'e.g. AMP-7KQ4ZD or 192.168.1.5:54213',
                   border: OutlineInputBorder(),
                 ),
                 onSubmitted: (value) => _submitCode(context, viewModel),
@@ -252,6 +266,20 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
       children: [
         if (session.isReconnecting) ...[
           const _ReconnectingBanner(),
+          const SizedBox(height: 12),
+        ],
+        if (session.needsAudioUnlock) ...[
+          FilledButton.icon(
+            onPressed: viewModel.unlockAudio,
+            icon: const Icon(Icons.volume_up),
+            label: const Text('Tap to start audio'),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Your browser paused the stream until you tap.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall,
+          ),
           const SizedBox(height: 12),
         ],
         Row(

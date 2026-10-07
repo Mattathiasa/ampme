@@ -109,55 +109,64 @@ Windows-specific notes:
 
 ### Web (browser)
 
-The web build can **join** any session (with the same tight sync as native
-listeners) and can **host** its own sessions.
+The web build **hosts** sessions and **joins** them, from any copy of the app
+— `flutter run -d chrome`, the GitHub Pages copy
+(`https://mattathiasa.github.io/ampme/web/`), or a LAN server.
 
-**Joining from a browser** works like any other listener: enter the host's
-code (`192.168.1.5:54213`) and the browser streams + syncs exactly like the
-native apps. The one constraint is **mixed content**: the web app must be
-served over plain HTTP (not HTTPS) to reach `http://192.168.x.x` LAN hosts
-(browsers block HTTPS → HTTP). The relay below serves the app over HTTP, so
-this is automatic.
-
-**Hosting from a browser** is different under the hood, because a browser
-can't run the audio/control server a native host runs (no inbound TCP).
-Instead the browser plays the picked file with WebAudio and streams it to
-every joined listener over **WebRTC** (~30-80ms latency on a LAN), using a
-tiny **relay** on the LAN just for the connection handshake. The relay also
-serves the web app, so the whole flow is one command:
+**Hosting from a browser**: a browser can't run the audio/control server a
+native host runs (no inbound TCP), so instead it plays the picked file with
+WebAudio and streams it to every listener over **WebRTC** (~30-80ms latency
+on a LAN). The WebRTC handshake goes through **Supabase Realtime** broadcast
+(cloud signaling, `lib/core/network/signaling/`): open the app, **Host a
+Session → Start Session**, pick a song, and share the `AMP-XXXXXX` code, the
+join link, or the QR code (any phone camera opens the link and joins).
+Only the handshake touches the cloud — the audio flows device-to-device.
 
 ```sh
-flutter build web                 # once, after code changes
-dart run tool/web_relay.dart      # serves the landing page + web app + signaling
-# or: dart run tool/web_relay.dart --port 8080 --docs docs --web build/web
+flutter run -d chrome     # works out of the box; no relay needed
 ```
 
-The relay serves the **landing page** (`docs/`) at the root and the **web
-app** (`build/web`) beneath `/web/`, so the whole flow is one URL: open the
-printed `http://<lan-ip>:8080` on the hosting machine, click **Open the web
-app**, then **Host a Session**. Listeners join by entering the code shown
-(`<relay-ip>:8080/AMP-XXXX` — relay address + session token) in the native
-app's join-by-code field.
+**Joining from a browser**: enter an `AMP-XXXXXX` code or open a join link
+(`…/web/?join=AMP-XXXXXX`). Android/Windows apps join the same codes. A
+browser can also join a *phone-hosted* session (`192.168.1.5:54213`), but only
+when the web app itself is served over plain HTTP on the LAN: browsers block
+HTTPS pages from reaching `http://`/`ws://` LAN devices (mixed content), and
+the app says so instead of failing silently.
 
-**GitHub Pages preview**: the same web build is committed under
-`docs/web/`, so the landing page (`https://mattathiasa.github.io/ampme/`)
-links to a hosted copy at `/ampme/web/`. That copy renders the full UI but
-cannot reach LAN devices — browsers block secure (HTTPS) pages from
-connecting to plain-HTTP hosts (mixed content) — so it shows an in-app
-notice pointing at the LAN relay flow above, which is where hosting and
-joining actually work.
+**Cloud signaling config**: the Supabase project URL and publishable anon key
+are compiled in (`lib/core/network/signaling/signaling_config.dart`); point at
+another project with `--dart-define=SUPABASE_URL=… --dart-define=SUPABASE_ANON_KEY=…`.
+Only Realtime *broadcast* is used — no tables, no auth. ICE uses Google's
+public STUN servers; for devices behind strict NATs on *different* networks,
+add a TURN server with `--dart-define=TURN_URL=… TURN_USERNAME=… TURN_CREDENTIAL=…`.
+
+**No-internet option (LAN relay)**: `tool/web_relay.dart` is a tiny local
+signaling server that also serves the landing page and the web app over
+plain HTTP:
+
+```sh
+flutter build web --release --no-web-resources-cdn   # bundle CanvasKit: works offline
+dart run tool/web_relay.dart      # or: --port 8080 --docs docs --web build/web
+```
+
+Open the printed `http://<lan-ip>:8080/web/`, **Host a Session → Advanced:
+use a LAN relay**, enter the relay address and **Start on LAN relay**.
+Listeners join with `<relay-ip>:8080/AMP-XXXXXX` or the QR code.
+
+**GitHub Pages**: the web build is committed under `docs/web/`. Rebuild with
+`flutter build web --release --no-web-resources-cdn` and copy `build/web/`
+over it (`--no-web-resources-cdn` serves CanvasKit from the build instead of
+Google's CDN, so the LAN-relay copy also loads with no internet).
 
 Web-hosting notes:
 
 - Sessions are **live**: listeners can't seek, and there's no position
   sync/clock-sync (the audio arrives in real time over WebRTC). The host's
   own playback is delayed ~60ms to roughly match what listeners hear.
-- The web host can also be joined by other browsers (WebRTC works
-  browser-to-browser too).
+- Browsers may block audio until the listener taps the page (autoplay
+  policy); the join screen then shows **Tap to start audio**.
 - Keep the hosting tab open and visible — browsers throttle background tabs
   (timers/audio), which would let listeners drift.
-- `dart run tool/web_relay.dart --port 8080` alone runs signaling-only if
-  you're serving the app some other way.
 
 
 ## Production setup
