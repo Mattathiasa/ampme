@@ -24,6 +24,9 @@ class RemoteAudioSink {
 
   bool get isBlocked => _blocked;
 
+  /// Nothing to configure in the browser.
+  static Future<void> prepare() async {}
+
   Future<void> attach(rtc.MediaStream stream, rtc.MediaStreamTrack track) async {
     final jsStream = stream is MediaStreamWeb ? stream.jsStream : null;
     if (jsStream == null) return;

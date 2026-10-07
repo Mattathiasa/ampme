@@ -10,6 +10,7 @@ import '../network/models/playback_state.dart';
 import '../network/models/track_info.dart';
 import '../network/signaling/signaling_channel.dart';
 import '../network/webrtc/ice_servers.dart';
+import '../network/webrtc/opus_sdp.dart';
 import 'active_session.dart';
 
 /// How long a peer connection may sit in the transient `disconnected` state
@@ -127,6 +128,7 @@ class WebRtcListenerController extends ChangeNotifier
     try {
       // A fresh offer (host re-connecting us) replaces any previous peer.
       await _teardownPeer();
+      await RemoteAudioSink.prepare();
       final pc = await rtc.createPeerConnection(<String, dynamic>{
         'iceServers': iceServers(),
       });
@@ -166,8 +168,13 @@ class WebRtcListenerController extends ChangeNotifier
       _pendingCandidates.clear();
 
       final answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      _signaling?.send({'type': 'answer', 'to': 'host', 'sdp': answer.sdp});
+      // Ask the host for stereo, music-bitrate Opus instead of the mono
+      // voice defaults.
+      final answerSdp = withMusicOpusParams(answer.sdp ?? '');
+      await pc.setLocalDescription(
+        rtc.RTCSessionDescription(answerSdp, answer.type),
+      );
+      _signaling?.send({'type': 'answer', 'to': 'host', 'sdp': answerSdp});
     } catch (e, st) {
       reportError(e, st, context: 'answerWebRtcOffer');
     }

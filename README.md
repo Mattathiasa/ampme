@@ -231,6 +231,13 @@ and join codes pointing at non-private hosts are rejected.
 
 ## Running tests
 
+CI (`.github/workflows/android.yml`) runs analyze + tests, builds the APKs,
+and runs an end-to-end check on an Android emulator: a session hosted from
+the web app (headless Chrome, real Supabase signaling) is joined from the
+APK, and the stream must play through Android's media audio path. The
+pieces live in `tool/e2e/` and also run locally against any device on
+`adb` (`web_host.js` + `android_join.sh`).
+
 ```
 flutter analyze
 flutter test -j 1   # this sandbox's default test concurrency intermittently

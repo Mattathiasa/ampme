@@ -1,12 +1,56 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
+import '../observability/reporting.dart';
+
+/// Android audio setup for playing *music* received over WebRTC.
+///
+/// flutter_webrtc's Android defaults are tuned for calls: audio mode
+/// `MODE_IN_COMMUNICATION`, voice-call usage (earpiece routing, call volume)
+/// and echo cancellation / noise suppression on the playout path — which
+/// mangle music. Ampme listeners only receive audio, so use media routing
+/// and bypass voice processing (also enables stereo output).
+final _musicPlayback = rtc.AndroidAudioConfiguration(
+  manageAudioFocus: true,
+  androidAudioMode: rtc.AndroidAudioMode.normal,
+  androidAudioFocusMode: rtc.AndroidAudioFocusMode.gain,
+  androidAudioStreamType: rtc.AndroidAudioStreamType.music,
+  androidAudioAttributesUsageType: rtc.AndroidAudioAttributesUsageType.media,
+  androidAudioAttributesContentType:
+      rtc.AndroidAudioAttributesContentType.music,
+);
+
+bool _prepared = false;
+
 /// Native: the platform WebRTC stack already routes remote audio to the
-/// speaker, so this only exposes per-device volume.
+/// speaker, so this only configures the audio path and exposes per-device
+/// volume.
 class RemoteAudioSink {
   RemoteAudioSink({required void Function() onBlocked});
 
   rtc.MediaStreamTrack? _track;
   double _volume = 1.0;
+
+  /// Configures the platform audio path for music. Must run before the first
+  /// peer connection is created: flutter_webrtc builds its audio device
+  /// module once, on its first call, from these options.
+  static Future<void> prepare() async {
+    if (_prepared) return;
+    _prepared = true;
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await rtc.WebRTC.initialize(
+        options: {
+          'androidAudioConfiguration': _musicPlayback.toMap(),
+          'bypassVoiceProcessing': true,
+        },
+      );
+      await rtc.Helper.setAndroidAudioConfiguration(_musicPlayback);
+    } catch (e, st) {
+      // Playback still works with the defaults, just routed like a call.
+      reportError(e, st, context: 'remoteAudio.prepare');
+    }
+  }
 
   /// Never blocked natively (no autoplay policy).
   bool get isBlocked => false;
