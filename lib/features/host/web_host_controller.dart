@@ -10,11 +10,14 @@ import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 
-/// How far (in seconds) the host's *local* audible playback is delayed behind
-/// the audio source when listeners are connected, so the host hears itself at
-/// roughly the same instant the WebRTC listeners do (their path adds encode +
-/// network + jitter-buffer latency). No delay when nobody is listening.
-const double _listenerLeadSeconds = 0.06;
+/// Largest delay the host's own speaker can be set to (ms). A WebRTC listener
+/// typically trails the source by 100-400 ms (encode + network + jitter buffer
+/// + the phone's audio output latency); 2 s leaves room for bad networks.
+const int maxSyncDelayMs = 2000;
+
+/// Starting delay for the host's speaker while at least one listener is
+/// connected — a typical WebRTC + phone-output latency; the user fine-tunes it.
+const int defaultSyncDelayMs = 250;
 
 /// How long a listener's peer connection may sit in the transient
 /// `disconnected` state before it's dropped from the session.
@@ -63,6 +66,14 @@ class WebHostController extends ChangeNotifier {
   /// connected keep playing (WebRTC is direct), new ones can't join.
   bool signalingLost = false;
 
+  /// How long the host's *own speaker* is delayed behind the stream sent to
+  /// listeners, so the host's audio lines up with what listeners hear. Only
+  /// applies while listeners are connected (alone, there's nothing to match).
+  int syncDelayMs = defaultSyncDelayMs;
+
+  /// The delay actually applied right now.
+  int get effectiveSyncDelayMs => _listeners.isEmpty ? 0 : syncDelayMs;
+
   // ---- Track / playback ----
   TrackInfo? currentTrack;
   PlaybackState playbackState = PlaybackState.stopped;
@@ -80,6 +91,7 @@ class WebHostController extends ChangeNotifier {
   web.AudioBufferSourceNode? _source;
   web.MediaStreamAudioDestinationNode? _destination;
   web.GainNode? _gain;
+  web.DelayNode? _delay;
   double _startCtxTime = 0;
   double _startOffsetMs = 0;
   Timer? _positionTimer;
@@ -152,9 +164,15 @@ class WebHostController extends ChangeNotifier {
       _stopSource();
       _buffer = buffer;
       _destination ??= ctx.createMediaStreamDestination();
+      // Host speaker path: source -> gain -> delay -> speakers. The stream to
+      // listeners taps the source *before* this, so the delay only shifts
+      // what the host hears.
+      _delay ??= ctx.createDelay(maxSyncDelayMs / 1000.0)
+        ..delayTime.value = effectiveSyncDelayMs / 1000.0
+        ..connect(ctx.destination);
       _gain ??= ctx.createGain()
         ..gain.value = volume
-        ..connect(ctx.destination);
+        ..connect(_delay!);
       // Listeners may have joined before a track was loaded (the join code is
       // shown before the song is picked); they were recorded but never offered
       // a connection because there was no media stream yet. Connect them now.
@@ -226,9 +244,24 @@ class WebHostController extends ChangeNotifier {
     _notify();
   }
 
-  /// Starts a fresh [web.AudioBufferSourceNode] at [offset]. The local
-  /// audible start is delayed by [_listenerLeadSeconds] when listeners are
-  /// connected, so the host hears itself at roughly the same instant they do.
+  /// Sets how far the host's own speaker trails the stream, live (no restart).
+  /// Slide it up until the host and the listeners' phones sound as one.
+  Future<void> setSyncDelay(int ms) async {
+    syncDelayMs = ms.clamp(0, maxSyncDelayMs);
+    _applySyncDelay();
+    _notify();
+  }
+
+  void _applySyncDelay() {
+    final delay = _delay;
+    final ctx = _ctx;
+    if (delay == null || ctx == null) return;
+    // Ramp over 50 ms so changing it mid-song doesn't click.
+    delay.delayTime.setTargetAtTime(effectiveSyncDelayMs / 1000.0, ctx.currentTime, 0.05);
+  }
+
+  /// Starts a fresh [web.AudioBufferSourceNode] at [offset]. The host's
+  /// speaker delay is applied downstream by [_delay], not here.
   void _startSource(Duration offset) {
     final ctx = _ctx;
     final buffer = _buffer;
@@ -240,7 +273,7 @@ class WebHostController extends ChangeNotifier {
     final source = ctx.createBufferSource()
       ..buffer = buffer
       ..connect(destination)
-      ..connect(_gain ?? ctx.destination);
+      ..connect(_gain ?? _delay ?? ctx.destination);
     source.onended = ((web.Event _) {
       if (_source == source) {
         _source = null;
@@ -251,8 +284,7 @@ class WebHostController extends ChangeNotifier {
       }
     }).toJS;
 
-    final lead = _listeners.isEmpty ? 0.0 : _listenerLeadSeconds;
-    _startCtxTime = ctx.currentTime + lead;
+    _startCtxTime = ctx.currentTime;
     _startOffsetMs = offset.inMilliseconds.toDouble();
     source.start(_startCtxTime, offset.inMilliseconds / 1000.0);
     _source = source;
@@ -298,6 +330,7 @@ class WebHostController extends ChangeNotifier {
         final id = message['id'] as String?;
         if (id == null) return;
         _listeners[id] = message['deviceName'] as String? ?? 'Unknown device';
+        _applySyncDelay();
         _notify();
         // A re-join (same id) replaces the old connection.
         unawaited(_closePeer(id).then((_) => _connectPeer(id)));
@@ -427,7 +460,10 @@ class WebHostController extends ChangeNotifier {
   void _dropListener(String id) {
     final removed = _listeners.remove(id) != null;
     unawaited(_closePeer(id));
-    if (removed) _notify();
+    if (removed) {
+      _applySyncDelay();
+      _notify();
+    }
   }
 
   Future<void> _closePeer(String id) async {
@@ -507,6 +543,7 @@ class WebHostController extends ChangeNotifier {
     _ctx = null;
     _destination = null;
     _gain = null;
+    _delay = null;
     _notify();
 
     await _teardownSignaling();

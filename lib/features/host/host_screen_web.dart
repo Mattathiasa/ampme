@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/network/signaling/signaling_config.dart';
+import 'web_host_controller.dart' show maxSyncDelayMs;
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
 
@@ -241,6 +242,14 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             ),
           ),
         ],
+        if (track != null) ...[
+          const SizedBox(height: 16),
+          _SyncDelayCard(
+            delayMs: controller.syncDelayMs,
+            hasListeners: controller.listenerCount > 0,
+            onChanged: viewModel.setSyncDelay,
+          ),
+        ],
         const SizedBox(height: 16),
         Card(
           child: Padding(
@@ -365,6 +374,80 @@ class _JoinCodeCard extends StatelessWidget {
                 ],
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Delays this browser's own speaker so it lines up with the phones.
+///
+/// Every listener trails the host by its network + jitter-buffer + audio-output
+/// latency (typically 100-400 ms), so the host sounds *ahead*. Raising this
+/// delays only what the host hears — not the stream — until they sound as one.
+class _SyncDelayCard extends StatelessWidget {
+  const _SyncDelayCard({
+    required this.delayMs,
+    required this.hasListeners,
+    required this.onChanged,
+  });
+
+  final int delayMs;
+  final bool hasListeners;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    void nudge(int by) => onChanged((delayMs + by).clamp(0, maxSyncDelayMs));
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Match the phones', style: theme.textTheme.titleMedium),
+                ),
+                Text('$delayMs ms', style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              hasListeners
+                  ? 'If this speaker sounds ahead of the phones, raise the delay '
+                      'until they play as one. Only this browser is delayed.'
+                  : 'Applies once a device joins. Raise it if this speaker sounds '
+                      'ahead of the phones.',
+              style: theme.textTheme.bodySmall,
+            ),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.remove),
+                  tooltip: 'Less delay (-10 ms)',
+                  onPressed: delayMs > 0 ? () => nudge(-10) : null,
+                ),
+                Expanded(
+                  child: Slider(
+                    value: delayMs.toDouble().clamp(0, maxSyncDelayMs.toDouble()),
+                    min: 0,
+                    max: maxSyncDelayMs.toDouble(),
+                    divisions: maxSyncDelayMs ~/ 10,
+                    label: '$delayMs ms',
+                    onChanged: (v) => onChanged(v.round()),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  tooltip: 'More delay (+10 ms)',
+                  onPressed: delayMs < maxSyncDelayMs ? () => nudge(10) : null,
+                ),
+              ],
+            ),
           ],
         ),
       ),

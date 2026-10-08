@@ -144,6 +144,7 @@ class WebHostViewModel extends ChangeNotifier {
   Future<void> pause() => hostController.pause();
   Future<void> seek(Duration position) => hostController.seek(position);
   Future<void> setVolume(double volume) => hostController.setVolume(volume);
+  Future<void> setSyncDelay(int ms) => hostController.setSyncDelay(ms);
   Future<void> end() => hostController.end();
 
   @override
