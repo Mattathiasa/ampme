@@ -8,6 +8,8 @@ class TrackInfo {
     required this.durationMs,
     this.isLive = false,
     this.hasVideo = false,
+    this.liveEpoch,
+    this.liveSampleRate,
   });
 
   final String trackId;
@@ -23,6 +25,15 @@ class TrackInfo {
   /// The host is showing this file's video; listeners play its sound.
   final bool hasVideo;
 
+  /// Set for audio the web host captures live (a shared browser tab): the
+  /// capture session's id and its sample rate. The audio arrives over the
+  /// `ampme-live` data channel; position 0 is the first captured frame, and
+  /// every device plays it at the same delay behind the capture.
+  final int? liveEpoch;
+  final int? liveSampleRate;
+
+  bool get isLiveCapture => liveEpoch != null && liveSampleRate != null;
+
   Map<String, dynamic> toJson() => {
     'trackId': trackId,
     'fileName': fileName,
@@ -30,6 +41,8 @@ class TrackInfo {
     'durationMs': durationMs,
     'isLive': isLive,
     if (hasVideo) 'hasVideo': true,
+    'liveEpoch': ?liveEpoch,
+    'liveSampleRate': ?liveSampleRate,
   };
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) {
@@ -41,6 +54,8 @@ class TrackInfo {
       // Tolerate older hosts that don't send the field.
       isLive: json['isLive'] as bool? ?? false,
       hasVideo: json['hasVideo'] as bool? ?? false,
+      liveEpoch: json['liveEpoch'] as int?,
+      liveSampleRate: json['liveSampleRate'] as int?,
     );
   }
 }

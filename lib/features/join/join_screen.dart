@@ -356,7 +356,7 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Center(child: Text('Waiting for the host to pick a song…')),
                   )
-                : track.isLive
+                : track.isLive || track.isLiveCapture
                     ? _LiveListenerView(
                         volume: session.volume,
                         onVolumeChanged: viewModel.setVolume,

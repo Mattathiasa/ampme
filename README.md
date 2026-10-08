@@ -139,6 +139,17 @@ picture nobody sees. Android writes it to disk, so long films don't sit in
 memory. Picks over 1 GB are refused (the browser holds the file). Which formats work
 depends on the host browser: Chrome/Edge play MP4 (H.264/AAC) and WebM.
 
+**Share a browser tab (YouTube, Spotify Web, …)**: on a computer running
+Chrome or Edge, **Share a browser tab** and pick the tab (with "Share tab
+audio" on). Live audio can't be copied ahead of time, so every device — the
+host included — plays it **1 s behind the tab**, all at the same instant:
+the host stamps the captured audio with its clock, streams it (16-bit PCM,
+~190 KB/s per listener — fine on WiFi, heavy for many listeners over the
+internet) over a third data channel, and each device schedules it on the
+shared timeline. Android plays it through a loopback "endless WAV" its
+regular player streams; browsers schedule it with WebAudio. The shared tab
+is muted locally, and its picture runs that 1 s ahead of the sound.
+
 ```sh
 flutter run -d chrome     # works out of the box; no relay needed
 ```
