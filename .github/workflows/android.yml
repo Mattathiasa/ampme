@@ -1,0 +1,207 @@
+# Builds the Android APKs and proves they work against the web app:
+#
+#   build    analyze + unit tests, then split-per-ABI and universal APKs.
+#   e2e      hosts a session from the web app (docs/web) in headless Chrome
+#            over the real Supabase signaling, then boots an Android emulator,
+#            installs the x86_64 APK, joins the session by code and checks the
+#            stream plays through Android's media audio path.
+#   release  only for a push whose commit message contains [release-apks], or
+#            a manual run with the `release` input ticked, and only after
+#            build + e2e pass: commits the arm APKs to release/ and publishes
+#            the GitHub Release v<pubspec version> with all three APKs as the
+#            latest release (the landing page's download buttons serve it).
+#
+# Release signing: add repository secrets ANDROID_KEYSTORE_BASE64 (the .jks,
+# base64-encoded), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without
+# them the APKs are signed with the runner's throwaway debug key, so each
+# build has a different signature (installs over an older build fail).
+name: Android
+
+# Push runs also report their status on any open PR for the commit, so there's
+# no separate pull_request trigger (it would run the emulator job twice).
+on:
+  push:
+    # The landing page (docs/index.html) doesn't affect the app; docs/web
+    # does (the e2e job hosts from it), so it still triggers.
+    paths-ignore: ['**.md', 'docs/index.html']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Commit the APKs to release/ and publish the GitHub Release
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.9'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test -j 1
+      - name: Configure release signing (if secrets are set)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::No release keystore secrets; signing with a throwaway debug key."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "KEY_ALIAS=$KEY_ALIAS"
+            echo "KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - run: flutter build apk --release --split-per-abi
+      - run: flutter build apk --release
+      - name: Collect APKs
+        run: |
+          mkdir -p apks
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apks/ampme-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk apks/ampme-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk apks/ampme-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk apks/ampme.apk
+          ls -la apks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: apks/
+
+  e2e:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apks
+          path: apks
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright + Chromium
+        working-directory: tool/e2e
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - run: python3 tool/e2e/make_tone.py "$RUNNER_TEMP/tone.wav" 300
+      - name: Serve the committed web app
+        run: nohup python3 -m http.server 8080 --directory docs > "$RUNNER_TEMP/http.log" 2>&1 &
+      - name: Host a session from the web app (headless Chrome)
+        working-directory: tool/e2e
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/e2e-out"
+          BASE=http://127.0.0.1:8080/web/ \
+          TONE="$RUNNER_TEMP/tone.wav" \
+          CODE_FILE="$RUNNER_TEMP/ampme-code.txt" \
+          RESULT_FILE="$RUNNER_TEMP/host-result.json" \
+          STOP_FILE="$RUNNER_TEMP/host-stop" \
+          OUT="$GITHUB_WORKSPACE/e2e-out" \
+          TIMEOUT_S=1500 \
+          nohup node web_host.js > "$GITHUB_WORKSPACE/e2e-out/web-host.log" 2>&1 &
+          for i in $(seq 1 120); do [ -s "$RUNNER_TEMP/ampme-code.txt" ] && break; sleep 1; done
+          cat "$GITHUB_WORKSPACE/e2e-out/web-host.log"
+          test -s "$RUNNER_TEMP/ampme-code.txt"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Join from the APK on an Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tool/e2e/android_join.sh apks/ampme-x86_64.apk "$RUNNER_TEMP/ampme-code.txt" e2e-out
+      - name: Check the web host saw the APK receiving audio
+        run: |
+          touch "$RUNNER_TEMP/host-stop"
+          for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/host-result.json" ] && break; sleep 1; done
+          tail -n 15 e2e-out/web-host.log
+          cat "$RUNNER_TEMP/host-result.json"
+          grep -q '"pass": true' "$RUNNER_TEMP/host-result.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-out
+          path: e2e-out/
+
+  release:
+    needs: [build, e2e]
+    if: >-
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-apks]')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apks
+          path: apks
+      - name: Commit the arm APKs to release/
+        run: |
+          cp apks/ampme-arm64-v8a.apk release/ampme-arm64-v8a.apk
+          cp apks/ampme-armeabi-v7a.apk release/ampme-armeabi-v7a.apk
+          # Commit as the account that pushed (not a bot), via its noreply address.
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git add release/
+          git commit -m "Update release APKs (CI run ${{ github.run_id }}) [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          **Ampme v$VERSION** — sessions hosted from the web app now work everywhere.
+
+          - Host from the browser and share an **AMP-XXXXXX** code, link or QR; this app joins it from anywhere.
+          - Web-hosted streams play through the phone's **media** audio path in **stereo** (previously routed like a phone call).
+
+          > **Updating from v1.0.0?** Uninstall it first — v1.0.0 was signed with a different key, so Android won't install over it.
+
+          ## Downloads
+          - **ampme-arm64-v8a.apk** — most modern phones
+          - **ampme-armeabi-v7a.apk** — older phones
+          - **ampme.apk** — universal, works everywhere (larger)
+          NOTES
+          TAG="v$VERSION"
+          # Upload into a draft first so the release never goes public with
+          # missing assets, then publish it as the latest release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk --clobber
+          else
+            gh release create "$TAG" --draft --target "$RELEASE_SHA" \
+              --title "Ampme v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+              apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk
+          fi
+          gh release edit "$TAG" --draft=false --latest
+          gh release view "$TAG" --json tagName,isDraft,url,assets --jq '{tag: .tagName, draft: .isDraft, url, assets: [.assets[].name]}'

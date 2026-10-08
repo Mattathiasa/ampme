@@ -1,0 +1,30 @@
+# Keeps the `ampme-signaling` Supabase project awake. Free-tier projects are
+# paused after ~7 days without API activity, and a paused project means the
+# web app can't host or join sessions ("Could not reach the Ampme signaling
+# service"). This pings its REST API every 3 days.
+#
+# Note: scheduled workflows only run from the repository's default branch.
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the signaling project
+        env:
+          # The same public anon key the app ships with
+          # (lib/core/network/signaling/signaling_config.dart).
+          URL: https://ulhsowyzpqlrpyhegimt.supabase.co
+          KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsaHNvd3l6cHFscnB5aGVnaW10Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTE1MjAsImV4cCI6MjEwNjk2NzUyMH0.RiSA1Q-fj4usRhyAYxzHdSpgjrLLg7GY3WF34MUez0M
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/rest/v1/" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          echo "Supabase REST responded $code"
+          [ "$code" -lt 500 ]
