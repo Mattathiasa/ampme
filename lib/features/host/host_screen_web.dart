@@ -5,7 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/network/signaling/signaling_config.dart';
 import 'web_host_controller.dart'
-    show ListenerPhase, WebListener, maxSpeakerOffsetMs, minSpeakerOffsetMs;
+    show ListenerPhase, WebListener, liveDelayMs, maxSpeakerOffsetMs, minSpeakerOffsetMs;
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
 import 'widgets/web_video_view.dart';
@@ -214,10 +214,26 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
           onPressed: viewModel.isPickingFile ? null : viewModel.pickAndLoadTrack,
           icon: Icon(track?.hasVideo ?? false ? Icons.movie : Icons.library_music),
           label: Text(
-            track == null ? 'Choose a song or video' : track.fileName,
+            track == null || track.isLiveCapture ? 'Choose a song or video' : track.fileName,
             overflow: TextOverflow.ellipsis,
           ),
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: controller.canShareTab && !controller.isSharingTab
+              ? viewModel.startTabShare
+              : null,
+          icon: const Icon(Icons.tab),
+          label: const Text('Share a browser tab (YouTube…)'),
+        ),
+        if (!controller.canShareTab)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Sharing a tab needs Chrome or Edge on a computer.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
         if (controller.preparingSoundProgress case final progress?) ...[
           const SizedBox(height: 8),
           Text('Preparing the sound for the phones… ${(progress * 100).round()}%'),
@@ -241,7 +257,16 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             style: theme.textTheme.bodySmall,
           ),
         ],
-        if (track != null) ...[
+        if (track != null && track.isLiveCapture) ...[
+          const SizedBox(height: 16),
+          _LiveShareCard(
+            playing: controller.liveIsPlaying,
+            volume: controller.volume,
+            onVolumeChanged: viewModel.setVolume,
+            onStop: viewModel.stopTabShare,
+          ),
+        ],
+        if (track != null && !track.isLiveCapture) ...[
           const SizedBox(height: 16),
           Card(
             child: Padding(
@@ -260,7 +285,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             ),
           ),
         ],
-        if (track != null && controller.listenerCount > 0) ...[
+        if (track != null && !track.isLiveCapture && controller.listenerCount > 0) ...[
           const SizedBox(height: 16),
           _SpeakerOffsetCard(
             offsetMs: controller.speakerOffsetMs,
@@ -390,6 +415,67 @@ class _JoinCodeCard extends StatelessWidget {
                 ],
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown while a browser tab's audio is shared.
+class _LiveShareCard extends StatelessWidget {
+  const _LiveShareCard({
+    required this.playing,
+    required this.volume,
+    required this.onVolumeChanged,
+    required this.onStop,
+  });
+
+  final bool playing;
+  final double volume;
+  final ValueChanged<double> onVolumeChanged;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.fiber_manual_record, size: 14, color: theme.colorScheme.error),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    playing ? 'Live: sharing tab audio' : 'Starting…',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Every device — this one included — plays the tab '
+              '${liveDelayMs / 1000} s behind it, all together. The picture '
+              'in the shared tab runs that much ahead of the sound.',
+              style: theme.textTheme.bodySmall,
+            ),
+            Row(
+              children: [
+                const Icon(Icons.volume_down),
+                Expanded(child: Slider(value: volume, onChanged: onVolumeChanged)),
+                const Icon(Icons.volume_up),
+              ],
+            ),
+            OutlinedButton.icon(
+              onPressed: onStop,
+              icon: const Icon(Icons.stop),
+              label: const Text('Stop sharing'),
+            ),
           ],
         ),
       ),

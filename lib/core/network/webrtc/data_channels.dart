@@ -6,3 +6,6 @@ const String controlChannelLabel = 'ampme-control';
 
 /// Song bytes, host -> listener (see `file_transfer.dart`).
 const String fileChannelLabel = 'ampme-file';
+
+/// Live-captured audio frames (see `live_frames.dart`), host -> listener.
+const String liveChannelLabel = 'ampme-live';

@@ -93,6 +93,18 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # A video: the host shows the picture, the APK plays its sound.
+          - mode: video
+            live: ''
+            track: 'clip\.webm'
+          # A shared browser tab, played live by every device together.
+          - mode: live
+            live: '1'
+            track: 'Live audio'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -120,6 +132,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/e2e-out"
           BASE=http://127.0.0.1:8080/web/ \
           TONE="$RUNNER_TEMP/clip.webm" \
+          LIVE="${{ matrix.live }}" \
           CODE_FILE="$RUNNER_TEMP/ampme-code.txt" \
           RESULT_FILE="$RUNNER_TEMP/host-result.json" \
           STOP_FILE="$RUNNER_TEMP/host-stop" \
@@ -136,6 +149,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Join from the APK on an Android emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TRACK_NAME: ${{ matrix.track }}
         with:
           api-level: 34
           arch: x86_64
@@ -154,7 +169,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: e2e-out
+          name: e2e-out-${{ matrix.mode }}
           path: e2e-out/
 
   release:
@@ -186,15 +201,13 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — every device plays in step, now with videos.
+          **Ampme v$VERSION** — every device plays in step: songs, videos, and now any browser tab.
 
-          - **Real sync for web-hosted sessions:** the host sends the song to every phone, then all devices — the host included — start at the same instant and correct drift every second (previously a live stream that each phone played with its own delay).
-          - **Videos:** pick a video on the web host; it shows the picture and every phone plays the sound in sync. Big files are saved to storage, not memory.
-          - Join with an **AMP-XXXXXX** code, link or QR from anywhere. The host shows each phone's status (getting the song → Ready → In sync ±N ms).
+          - **Share a browser tab (YouTube…):** on the web host (Chrome/Edge on a computer), share a tab and every device — the host included — plays its sound together, 1 s behind the tab.
+          - **Videos:** pick a video on the web host; it shows the picture and every phone plays the sound in sync (sent as compact Opus audio).
+          - **Real sync for web-hosted sessions:** every device plays its own copy, started at the same instant, with drift correction every second.
 
-          > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key).
-
-          > **Updating from v1.0.0?** Uninstall it first — v1.0.0 was signed with a different key, so Android won't install over it.
+          > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 
           ## Downloads
           - **ampme-arm64-v8a.apk** — most modern phones

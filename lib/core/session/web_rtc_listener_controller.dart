@@ -6,9 +6,12 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import '../../utils/user_activation.dart';
 import '../audio/audio_engine.dart';
 import '../audio/bytes_uri.dart';
+import '../audio/live_source.dart';
+import '../audio/pcm_ring.dart';
 import '../audio/remote_audio_sink.dart';
 import '../network/default_receive_sink.dart';
 import '../network/file_transfer.dart';
+import '../network/live_frames.dart';
 import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
 import '../network/models/track_info.dart';
@@ -42,7 +45,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   WebRtcListenerController({required this.selfDevice, AudioEngine? audioEngine}) {
     _session = ListenerSessionController(
       selfDevice: selfDevice,
-      audioEngine: audioEngine,
+      audioEngine: audioEngine ?? createWebSessionEngine(),
       trackResolver: _resolveTrack,
     )..addListener(_notify);
     _audioUnlocked = pageHasUserActivation;
@@ -57,6 +60,11 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   /// Playable URI per received track (temp file / blob URL), reused when the
   /// session reloads the same track (e.g. after a reconnect).
   final Map<String, Uri> _uris = {};
+
+  /// The live capture being received (only the newest epoch is kept).
+  int? _liveEpoch;
+  PcmRing? _liveRing;
+  LiveSource? _liveSource;
 
   SignalingChannel? _signaling;
   StreamSubscription<Map<String, dynamic>>? _messagesSub;
@@ -178,6 +186,13 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
             channel.onMessage = (m) => m.isBinary
                 ? _files.handleBinary(m.binary)
                 : _files.handleText(m.text);
+          case liveChannelLabel:
+            channel.onMessage = (m) {
+              if (!m.isBinary) return;
+              final f = LiveFrames.decode(m.binary);
+              if (f == null) return;
+              _liveRingFor(f.epoch, f.sampleRate)?.write(f.frame, f.pcm);
+            };
         }
       };
       pc.onConnectionState = (state) {
@@ -268,9 +283,29 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     }
   }
 
+  /// The ring for live capture [epoch]; a newer epoch replaces an older one,
+  /// and frames of an older one are ignored.
+  PcmRing? _liveRingFor(int epoch, int sampleRate) {
+    final current = _liveEpoch;
+    if (current != null && epoch < current) return null;
+    if (current == epoch && _liveRing != null) return _liveRing;
+    _liveRing?.close();
+    unawaited(_liveSource?.close());
+    _liveSource = null;
+    _liveEpoch = epoch;
+    return _liveRing = PcmRing(channels: LiveFrames.channels, sampleRate: sampleRate);
+  }
+
   /// [TrackResolver] for the inner session: waits for the song's bytes to
-  /// arrive over the file channel and makes them playable locally.
+  /// arrive over the file channel and makes them playable locally; a live
+  /// capture resolves to a stream of the frames arriving on the live channel.
   Future<Uri?> _resolveTrack(TrackInfo track) async {
+    if (track.isLiveCapture) {
+      final epoch = track.liveEpoch!;
+      final ring = _liveRingFor(epoch, track.liveSampleRate!);
+      if (ring == null) return null;
+      return (_liveSource ??= await openLiveSource(ring, epoch)).uri;
+    }
     final cached = _uris[track.trackId];
     if (cached != null) return cached;
     final file = await _files.waitFor(track.trackId);
@@ -358,6 +393,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       releaseBytesUri(uri);
     }
     _uris.clear();
+    _liveRing?.close();
+    unawaited(_liveSource?.close());
     unawaited(_teardown());
     super.dispose();
   }

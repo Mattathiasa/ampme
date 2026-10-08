@@ -5,6 +5,8 @@
 // Env:
 //   BASE         web app URL (e.g. http://127.0.0.1:8080/web/)
 //   TONE         audio or video file to play (make_tone.py / make_video.sh)
+//   LIVE=1       instead of a file, share a "browser tab" (a synthetic one
+//                playing a click every 0.5 s) once a listener has joined
 //   CODE_FILE    where to write the session code once the session is up
 //   RESULT_FILE  where to write the JSON result when done
 //   STOP_FILE    finish when this file appears (or after TIMEOUT_S)
@@ -28,6 +30,7 @@ const RESULT_FILE = env('RESULT_FILE', '/tmp/host-result.json');
 const STOP_FILE = env('STOP_FILE', '/tmp/host-stop');
 const OUT = env('OUT', '.');
 const TIMEOUT_MS = Number(env('TIMEOUT_S', '900')) * 1000;
+const LIVE = env('LIVE', '') === '1';
 const started = Date.now();
 
 const log = (...a) => console.log(`[host +${((Date.now() - started) / 1000).toFixed(1)}s]`, ...a);
@@ -79,6 +82,30 @@ async function stats(page) {
   });
   const ctx = await browser.newContext({ locale: 'en-US', viewport: { width: 420, height: 1800 } });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(BASE).origin });
+  if (LIVE) {
+    // A stand-in for the tab picker: a "tab" playing a click every 0.5 s.
+    await ctx.addInitScript(() => {
+      navigator.mediaDevices.getDisplayMedia = async () => {
+        const ac = new AudioContext();
+        await ac.resume();
+        const dest = ac.createMediaStreamDestination();
+        const osc = ac.createOscillator();
+        osc.frequency.value = 1000;
+        const g = ac.createGain();
+        g.gain.value = 0;
+        osc.connect(g).connect(dest);
+        osc.start();
+        let t = ac.currentTime + 0.2;
+        setInterval(() => {
+          while (t < ac.currentTime + 1) { g.gain.setValueAtTime(0.9, t); g.gain.setValueAtTime(0, t + 0.012); t += 0.5; }
+        }, 200);
+        const canvas = document.createElement('canvas');
+        canvas.getContext('2d').fillRect(0, 0, 10, 10);
+        const v = canvas.captureStream(5);
+        return new MediaStream([...dest.stream.getAudioTracks(), ...v.getVideoTracks()]);
+      };
+    });
+  }
   await ctx.addInitScript(() => {
     window.__pcs = [];
     const Orig = window.RTCPeerConnection;
@@ -112,24 +139,36 @@ async function stats(page) {
     result.code = code;
     log('session code', code);
 
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      page.getByRole('button', { name: /Choose a song/ }).click(),
-    ]);
-    await chooser.setFiles(TONE);
-    await waitForText(page, /\| Play/, 30000);
-    fs.writeFileSync(CODE_FILE, code + '\n');
-    log('track loaded; waiting for a listener');
+    if (LIVE) {
+      fs.writeFileSync(CODE_FILE, code + '\n');
+      log('waiting for a listener (live mode)');
+      await waitForText(page, /Listener-/, TIMEOUT_MS - (Date.now() - started));
+      result.listenerSeen = true;
+      await page.mouse.move(5, 880);
+      await page.getByRole('button', { name: /Share a browser tab/ }).click({ force: true });
+      await waitForText(page, /Live: sharing tab audio/, 30000);
+      result.songDelivered = true;
+      log('sharing the (synthetic) tab');
+    } else {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser'),
+        page.getByRole('button', { name: /Choose a song/ }).click(),
+      ]);
+      await chooser.setFiles(TONE);
+      await waitForText(page, /\| Play/, 30000);
+      fs.writeFileSync(CODE_FILE, code + '\n');
+      log('track loaded; waiting for a listener');
 
-    await waitForText(page, /Listener-/, TIMEOUT_MS - (Date.now() - started));
-    result.listenerSeen = true;
-    log('listener joined; sending the song');
-    await waitForText(page, /\bReady\b/, 180000);
-    result.songDelivered = true;
-    log('listener has the song', JSON.stringify(await stats(page)));
-    await page.mouse.move(5, 880);
-    await page.getByRole('button', { name: 'Play' }).first().click({ force: true });
-    log('playing');
+      await waitForText(page, /Listener-/, TIMEOUT_MS - (Date.now() - started));
+      result.listenerSeen = true;
+      log('listener joined; sending the song');
+      await waitForText(page, /\bReady\b/, 180000);
+      result.songDelivered = true;
+      log('listener has the song', JSON.stringify(await stats(page)));
+      await page.mouse.move(5, 880);
+      await page.getByRole('button', { name: 'Play' }).first().click({ force: true });
+      log('playing');
+    }
 
     result.drifts = [];
     let last = null;

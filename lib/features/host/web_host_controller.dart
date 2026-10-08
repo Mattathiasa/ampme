@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
@@ -13,8 +14,12 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../utils/id_generator.dart';
+import '../../core/audio/live_pcm_player.dart';
+import '../../core/audio/pcm_ring.dart';
+import '../../core/network/live_frames.dart';
 import 'audio_extract.dart';
 import 'sync_math.dart';
+import 'web_live_capture.dart';
 
 /// Range of the host's own speaker offset (ms). Positive delays this
 /// browser's speaker relative to the phones (use it if the host still sounds
@@ -23,6 +28,18 @@ const int minSpeakerOffsetMs = -300;
 const int maxSpeakerOffsetMs = 500;
 
 const String _speakerOffsetStorageKey = 'ampme.speakerOffsetMs';
+
+/// How far behind a shared tab every device (this one included) plays it:
+/// room for the audio to reach every phone and be buffered there.
+const int liveDelayMs = 1000;
+
+/// Live audio history sent to a device that joins mid-share (so it can start
+/// on the shared timeline straight away).
+const int _liveHistoryMs = liveDelayMs + 3000;
+
+/// Above this much queued live audio, a slow device skips frames (heard as a
+/// brief gap) instead of falling ever further behind.
+const int _maxBufferedLiveBytes = 512 * 1024;
 
 /// The sender id this host uses in control messages.
 const String _hostId = 'host';
@@ -82,6 +99,7 @@ class _Peer {
   final web.RTCPeerConnection pc;
   web.RTCDataChannel? control;
   web.RTCDataChannel? file;
+  web.RTCDataChannel? live;
   bool remoteSet = false;
   final List<Map<String, dynamic>> pendingIce = [];
   Timer? disconnectTimer;
@@ -156,6 +174,25 @@ class WebHostController extends ChangeNotifier {
 
   /// 0..1 while a video's sound is being prepared for the phones.
   double? preparingSoundProgress;
+
+  // ---- Shared tab (live capture) ----
+  WebLiveCapture? _capture;
+  PcmRing? _liveRing;
+  LivePcmPlayer? _livePlayer;
+  int _liveEpoch = DateTime.now().millisecondsSinceEpoch ~/ 1000 & 0x3fffffff;
+  StreamSubscription<CaptureBatch>? _captureSub;
+
+  /// True while a browser tab's audio is being shared.
+  bool get isSharingTab => _capture != null;
+
+  /// True once the shared tab's audio is playing on the shared timeline.
+  bool get liveIsPlaying => _livePlayer?.isPlaying ?? false;
+
+  /// Whether this browser can share a tab's audio at all.
+  bool get canShareTab => canCaptureTabAudio;
+
+  /// Something is audibly playing on the shared timeline (song or tab).
+  bool get _audible => _source != null || liveIsPlaying;
 
   /// For a video file: the muted `<video>` the host screen shows. Its picture
   /// follows the WebAudio timeline (the sound everyone hears).
@@ -246,6 +283,7 @@ class WebHostController extends ChangeNotifier {
   /// every device (this one included) plays its sound.
   Future<void> loadTrack(Uint8List bytes, String fileName) async {
     errorMessage = null;
+    if (isSharingTab) stopTabShare();
     try {
       final ctx = _ctx ??= web.AudioContext();
       // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
@@ -366,6 +404,7 @@ class WebHostController extends ChangeNotifier {
   Future<void> setVolume(double value) async {
     volume = value;
     _gain?.gain.value = value;
+    _livePlayer?.volume = value;
     _notify();
   }
 
@@ -512,6 +551,159 @@ class WebHostController extends ChangeNotifier {
     _startVideo(when, offsetSec);
   }
 
+  // ---- Shared tab (live capture) ----
+
+  /// Asks the user to pick a browser tab and shares its audio: every device
+  /// (this one included) plays it [liveDelayMs] after the tab, together.
+  Future<void> startTabShare() async {
+    errorMessage = null;
+    final ctx = _ctx ??= web.AudioContext();
+    try {
+      if (ctx.state != 'running') await ctx.resume().toDart;
+      final capture = await WebLiveCapture.pickTab(ctx);
+      if (isSharingTab) stopTabShare(announce: false);
+      // The tab replaces any song or video.
+      _stopSource();
+      _stopReferenceTimer();
+      _setVideo(null);
+      _buffer = null;
+      _fileBytes = null;
+      _fileMime = null;
+      _fileSendName = null;
+      _gain ??= ctx.createGain()
+        ..gain.value = volume
+        ..connect(ctx.destination);
+
+      final rate = ctx.sampleRate.round();
+      final epoch = ++_liveEpoch;
+      final ring = PcmRing(channels: LiveFrames.channels, sampleRate: rate, capacitySeconds: 30);
+      _capture = capture;
+      _liveRing = ring;
+      _livePlayer = LivePcmPlayer(ctx, ring, destination: _gain)..volume = volume;
+      capture.onEnded(() {
+        if (identical(_capture, capture)) stopTabShare();
+      });
+      final track = TrackInfo(
+        trackId: generateId(),
+        fileName: 'Shared tab audio',
+        streamUrl: '',
+        durationMs: 0,
+        liveEpoch: epoch,
+        liveSampleRate: rate,
+      );
+      currentTrack = track;
+      position = Duration.zero;
+      playbackState = PlaybackState.playing;
+      _broadcast(ControlMessage.trackChanged(senderId: _hostId, track: track));
+      for (final l in _listeners.values) {
+        if (l.phase != ListenerPhase.needsUpdate) l.phase = ListenerPhase.ready;
+      }
+      _captureSub = capture.batches.listen((b) => _handleCaptureBatch(track, epoch, rate, b));
+      _notify();
+    } catch (e, st) {
+      final cancelled = e.toString().contains('NotAllowedError') ||
+          e.toString().contains('AbortError');
+      if (!cancelled) {
+        errorMessage = e is StateError ? e.message : 'Could not share that tab: $e';
+        reportError(e, st, context: 'webHost.startTabShare');
+      }
+      _notify();
+    }
+  }
+
+  void _handleCaptureBatch(TrackInfo track, int epoch, int rate, CaptureBatch b) {
+    final ring = _liveRing;
+    final player = _livePlayer;
+    final ctx = _ctx;
+    if (ring == null || player == null || ctx == null || currentTrack != track) return;
+    if (player.startWallMs == null) {
+      // Frame 0 was captured at this wall time; everyone hears it
+      // [liveDelayMs] later.
+      final capturedAt = _nowMs() - ((ctx.currentTime - b.ctxTime) * 1000).round() -
+          (b.frame * 1000 ~/ rate);
+      final startWall = capturedAt + liveDelayMs;
+      player.start(startWall);
+      _broadcast(
+        ControlMessage.play(
+          senderId: _hostId,
+          trackId: track.trackId,
+          positionMs: 0,
+          startAtHostTimeMs: startWall,
+        ),
+      );
+      _startReferenceTimer();
+    }
+    final pcm = LiveFrames.interleave([b.left, b.right]);
+    ring.write(b.frame, pcm);
+    final message = LiveFrames.encode(epoch: epoch, sampleRate: rate, frame: b.frame, pcm: pcm);
+    for (final peer in _peers.values) {
+      final ch = peer.live;
+      if (!_isOpen(ch) || ch!.bufferedAmount > _maxBufferedLiveBytes) continue;
+      try {
+        ch.send(message.toJS);
+      } catch (_) {}
+    }
+  }
+
+  /// Sends a device that just connected the recent shared-tab audio, so it
+  /// can start on the timeline right away.
+  void _sendLiveHistory(String id) {
+    final ch = _peers[id]?.live;
+    final ring = _liveRing;
+    final track = currentTrack;
+    if (!_isOpen(ch) || ring == null || track == null || !track.isLiveCapture) return;
+    final rate = ring.sampleRate;
+    var frame = ring.endFrame - rate * _liveHistoryMs ~/ 1000;
+    if (frame < ring.startFrame) frame = ring.startFrame;
+    const block = 4096;
+    while (frame < ring.endFrame) {
+      final n = ring.endFrame - frame < block ? ring.endFrame - frame : block;
+      final pcm = Int16List(n * ring.channels);
+      ring.read(frame, pcm);
+      try {
+        ch!.send(
+          LiveFrames.encode(epoch: track.liveEpoch!, sampleRate: rate, frame: frame, pcm: pcm).toJS,
+        );
+      } catch (_) {
+        return;
+      }
+      frame += n;
+    }
+    _listeners[id]?.phase = ListenerPhase.ready;
+    _notify();
+  }
+
+  /// Stops sharing the tab; listeners stop too ([announce]).
+  void stopTabShare({bool announce = true}) {
+    final capture = _capture;
+    if (capture == null) return;
+    final track = currentTrack;
+    final pos = _timelinePositionAt(_nowMs());
+    _capture = null;
+    unawaited(_captureSub?.cancel());
+    _captureSub = null;
+    capture.stop();
+    _livePlayer?.dispose();
+    _livePlayer = null;
+    _liveRing?.close();
+    _liveRing = null;
+    _stopReferenceTimer();
+    if (announce && track != null) {
+      _broadcast(
+        ControlMessage.pause(
+          senderId: _hostId,
+          trackId: track.trackId,
+          positionMs: pos,
+          hostTimeMs: _nowMs(),
+        ),
+      );
+    }
+    currentTrack = null;
+    playbackState = PlaybackState.stopped;
+    position = Duration.zero;
+    _notify();
+  }
+
   // ---- Video (picture follows the sound) ----
 
   static String _baseName(String fileName) {
@@ -601,6 +793,8 @@ class WebHostController extends ChangeNotifier {
   /// Where the shared timeline (what listeners should be playing) is at host
   /// wall time [wallMs], derived from this browser's audio clock.
   int _timelinePositionAt(int wallMs) {
+    final live = _livePlayer;
+    if (live != null && live.isPlaying) return live.positionAt(wallMs);
     final ctx = _ctx;
     if (ctx == null || _source == null) return position.inMilliseconds;
     final ctxAt = ctx.currentTime + (wallMs - _nowMs()) / 1000.0;
@@ -642,7 +836,7 @@ class WebHostController extends ChangeNotifier {
     _referenceTimer?.cancel();
     _referenceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final track = currentTrack;
-      if (track == null || _source == null) return;
+      if (track == null || !_audible) return;
       final now = _nowMs();
       _broadcast(
         ControlMessage.positionSync(
@@ -705,7 +899,7 @@ class WebHostController extends ChangeNotifier {
     final listenerPlaying = payload['playbackState'] == 'playing';
     final positionMs = payload['positionMs'] as int?;
     if (playbackState != PlaybackState.playing ||
-        _source == null ||
+        !_audible ||
         !listenerPlaying ||
         positionMs == null) {
       if (listener.driftMs != null) {
@@ -733,7 +927,7 @@ class WebHostController extends ChangeNotifier {
     if (peer == null) return;
     final track = currentTrack;
     final now = _nowMs();
-    final playing = playbackState == PlaybackState.playing && _source != null;
+    final playing = playbackState == PlaybackState.playing && _audible;
     _send(
       id,
       ControlMessage.welcome(
@@ -923,6 +1117,14 @@ class WebHostController extends ChangeNotifier {
       peer.file = file;
       file.onopen = ((web.Event _) => unawaited(_sendFile(id))).toJS;
 
+      final live = pc.createDataChannel(
+        liveChannelLabel,
+        web.RTCDataChannelInit(ordered: true),
+      );
+      live.binaryType = 'arraybuffer';
+      peer.live = live;
+      live.onopen = ((web.Event _) => _sendLiveHistory(id)).toJS;
+
       final offer = await pc.createOffer().toDart;
       if (offer == null) {
         throw StateError('createOffer returned no description.');
@@ -1043,6 +1245,7 @@ class WebHostController extends ChangeNotifier {
     _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
     _signaling?.send({'type': 'end'});
     _removePageHideHook();
+    if (isSharingTab) stopTabShare(announce: false);
     _stopSource();
     _stopReferenceTimer();
     for (final id in _peers.keys.toList()) {

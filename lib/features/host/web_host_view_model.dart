@@ -159,6 +159,8 @@ class WebHostViewModel extends ChangeNotifier {
   Future<void> setVolume(double volume) => hostController.setVolume(volume);
   Future<void> setSpeakerOffset(int ms) => hostController.setSpeakerOffset(ms);
   Future<void> end() => hostController.end();
+  Future<void> startTabShare() => hostController.startTabShare();
+  void stopTabShare() => hostController.stopTabShare();
 
   @override
   void dispose() {
