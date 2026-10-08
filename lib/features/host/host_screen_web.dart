@@ -218,6 +218,12 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             overflow: TextOverflow.ellipsis,
           ),
         ),
+        if (controller.preparingSoundProgress case final progress?) ...[
+          const SizedBox(height: 8),
+          Text('Preparing the sound for the phones… ${(progress * 100).round()}%'),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(value: progress),
+        ],
         if (controller.errorMessage != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),

@@ -13,6 +13,7 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../utils/id_generator.dart';
+import 'audio_extract.dart';
 import 'sync_math.dart';
 
 /// Range of the host's own speaker offset (ms). Positive delays this
@@ -148,8 +149,13 @@ class WebHostController extends ChangeNotifier {
   PlaybackState playbackState = PlaybackState.stopped;
   Duration position = Duration.zero;
   double volume = 1.0;
+  /// What listeners receive: the picked song, or a video's sound only.
   Uint8List? _fileBytes;
   String? _fileMime;
+  String? _fileSendName;
+
+  /// 0..1 while a video's sound is being prepared for the phones.
+  double? preparingSoundProgress;
 
   /// For a video file: the muted `<video>` the host screen shows. Its picture
   /// follows the WebAudio timeline (the sound everyone hears).
@@ -252,10 +258,29 @@ class WebHostController extends ChangeNotifier {
       _gain ??= ctx.createGain()
         ..gain.value = volume
         ..connect(ctx.destination);
-      _fileBytes = bytes;
-      _fileMime = audioMimeFor(fileName);
       final hasVideo = isVideoFile(fileName);
-      _setVideo(hasVideo ? bytes : null);
+      _setVideo(hasVideo ? bytes : null, mime: audioMimeFor(fileName));
+      if (hasVideo) {
+        // Phones only play the sound: send them an audio-only copy, not the
+        // video (smaller, and they never decode a picture nobody sees).
+        preparingSoundProgress = 0;
+        _notify();
+        final audio = await extractAudio(
+          buffer,
+          onProgress: (p) {
+            preparingSoundProgress = p;
+            _notify();
+          },
+        );
+        preparingSoundProgress = null;
+        _fileBytes = audio.bytes;
+        _fileMime = audio.mime;
+        _fileSendName = '${_baseName(fileName)}.${audio.extension}';
+      } else {
+        _fileBytes = bytes;
+        _fileMime = audioMimeFor(fileName);
+        _fileSendName = fileName;
+      }
       final track = TrackInfo(
         trackId: generateId(),
         fileName: fileName,
@@ -274,6 +299,7 @@ class WebHostController extends ChangeNotifier {
       }
       _notify();
     } catch (e, st) {
+      preparingSoundProgress = null;
       errorMessage = 'Could not read the sound in that file '
           '(is it a format this browser plays?): $e';
       reportError(e, st, context: 'webHost.loadTrack');
@@ -488,7 +514,12 @@ class WebHostController extends ChangeNotifier {
 
   // ---- Video (picture follows the sound) ----
 
-  void _setVideo(Uint8List? bytes) {
+  static String _baseName(String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    return dot > 0 ? fileName.substring(0, dot) : fileName;
+  }
+
+  void _setVideo(Uint8List? bytes, {String? mime}) {
     _stopVideo();
     final oldUrl = _videoUrl;
     _video?.remove();
@@ -497,7 +528,7 @@ class WebHostController extends ChangeNotifier {
     if (oldUrl != null) web.URL.revokeObjectURL(oldUrl);
     if (bytes == null) return;
     final url = web.URL.createObjectURL(
-      web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: _fileMime ?? 'video/mp4')),
+      web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mime ?? 'video/mp4')),
     );
     _videoUrl = url;
     _video = (web.document.createElement('video') as web.HTMLVideoElement)
@@ -748,7 +779,7 @@ class WebHostController extends ChangeNotifier {
           trackId: track.trackId,
           size: bytes.length,
           mime: _fileMime,
-          name: track.fileName,
+          name: _fileSendName ?? track.fileName,
         )
             .toJS,
       );
@@ -1028,6 +1059,8 @@ class WebHostController extends ChangeNotifier {
     _setVideo(null);
     _fileBytes = null;
     _fileMime = null;
+    _fileSendName = null;
+    preparingSoundProgress = null;
     position = Duration.zero;
     playbackState = PlaybackState.stopped;
 
