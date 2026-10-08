@@ -4,7 +4,8 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/network/signaling/signaling_config.dart';
-import 'web_host_controller.dart' show maxSyncDelayMs;
+import 'web_host_controller.dart'
+    show defaultSyncDelayMs, maxSyncTrimMs, minSyncTrimMs;
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
 
@@ -245,9 +246,11 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         if (track != null) ...[
           const SizedBox(height: 16),
           _SyncDelayCard(
-            delayMs: controller.syncDelayMs,
+            delayMs: controller.effectiveSyncDelayMs,
+            measuredMs: controller.measuredLatencyMs,
+            trimMs: controller.syncTrimMs,
             hasListeners: controller.listenerCount > 0,
-            onChanged: viewModel.setSyncDelay,
+            onTrimChanged: viewModel.setSyncTrim,
           ),
         ],
         const SizedBox(height: 16),
@@ -381,26 +384,42 @@ class _JoinCodeCard extends StatelessWidget {
   }
 }
 
-/// Delays this browser's own speaker so it lines up with the phones.
+/// Keeps this browser's own speaker in step with the phones.
 ///
 /// Every listener trails the host by its network + jitter-buffer + audio-output
-/// latency (typically 100-400 ms), so the host sounds *ahead*. Raising this
-/// delays only what the host hears — not the stream — until they sound as one.
+/// latency. Listeners measure the first two themselves and report them; the
+/// host delays only its own speaker (not the stream) by the slowest one. The
+/// fine-tune covers what can't be measured (the phone's speaker buffer).
 class _SyncDelayCard extends StatelessWidget {
   const _SyncDelayCard({
     required this.delayMs,
+    required this.measuredMs,
+    required this.trimMs,
     required this.hasListeners,
-    required this.onChanged,
+    required this.onTrimChanged,
   });
 
   final int delayMs;
+  final int? measuredMs;
+  final int trimMs;
   final bool hasListeners;
-  final ValueChanged<int> onChanged;
+  final ValueChanged<int> onTrimChanged;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    void nudge(int by) => onChanged((delayMs + by).clamp(0, maxSyncDelayMs));
+    void nudge(int by) => onTrimChanged((trimMs + by).clamp(minSyncTrimMs, maxSyncTrimMs));
+    final String status;
+    if (!hasListeners) {
+      status = 'Syncs automatically once a device joins.';
+    } else if (measuredMs != null) {
+      status = 'Listeners trail by ~$measuredMs ms (measured automatically). '
+          'This speaker waits $delayMs ms so you all hear it together.';
+    } else {
+      status = 'Waiting for listeners to report their delay — using '
+          '$defaultSyncDelayMs ms. (Older app versions don\'t report it.)';
+    }
+    final trimLabel = trimMs == 0 ? '0 ms' : '${trimMs > 0 ? '+' : ''}$trimMs ms';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -410,18 +429,22 @@ class _SyncDelayCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text('Match the phones', style: theme.textTheme.titleMedium),
+                  child: Text('Sync with the phones', style: theme.textTheme.titleMedium),
                 ),
-                Text('$delayMs ms', style: theme.textTheme.titleMedium),
+                Text(hasListeners ? '$delayMs ms' : 'Auto', style: theme.textTheme.titleMedium),
               ],
             ),
             const SizedBox(height: 4),
+            Text(status, style: theme.textTheme.bodySmall),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: Text('Fine-tune', style: theme.textTheme.labelLarge)),
+                Text(trimLabel, style: theme.textTheme.labelLarge),
+              ],
+            ),
             Text(
-              hasListeners
-                  ? 'If this speaker sounds ahead of the phones, raise the delay '
-                      'until they play as one. Only this browser is delayed.'
-                  : 'Applies once a device joins. Raise it if this speaker sounds '
-                      'ahead of the phones.',
+              'Still ahead of the phones? Add delay. Behind them? Remove some.',
               style: theme.textTheme.bodySmall,
             ),
             Row(
@@ -429,22 +452,22 @@ class _SyncDelayCard extends StatelessWidget {
                 IconButton(
                   icon: const Icon(Icons.remove),
                   tooltip: 'Less delay (-10 ms)',
-                  onPressed: delayMs > 0 ? () => nudge(-10) : null,
+                  onPressed: trimMs > minSyncTrimMs ? () => nudge(-10) : null,
                 ),
                 Expanded(
                   child: Slider(
-                    value: delayMs.toDouble().clamp(0, maxSyncDelayMs.toDouble()),
-                    min: 0,
-                    max: maxSyncDelayMs.toDouble(),
-                    divisions: maxSyncDelayMs ~/ 10,
-                    label: '$delayMs ms',
-                    onChanged: (v) => onChanged(v.round()),
+                    value: trimMs.toDouble(),
+                    min: minSyncTrimMs.toDouble(),
+                    max: maxSyncTrimMs.toDouble(),
+                    divisions: (maxSyncTrimMs - minSyncTrimMs) ~/ 10,
+                    label: trimLabel,
+                    onChanged: (v) => onTrimChanged(v.round()),
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.add),
                   tooltip: 'More delay (+10 ms)',
-                  onPressed: delayMs < maxSyncDelayMs ? () => nudge(10) : null,
+                  onPressed: trimMs < maxSyncTrimMs ? () => nudge(10) : null,
                 ),
               ],
             ),

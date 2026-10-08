@@ -14,7 +14,9 @@
 // Passes (exit 0) when a listener joined and, while the peer connection was
 // `connected`, audio bytes flowed and the listener sent RTCP receiver reports
 // (proof it is actually receiving). The final state doesn't matter: the
-// listener device may already be gone when the host is told to stop.
+// listener device may already be gone when the host is told to stop. The
+// listener must also have reported its measured playout latency (the host's
+// sync card shows "trail by ~N ms"), which drives the host's speaker delay.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -137,14 +139,17 @@ async function stats(page) {
       last = await stats(page);
       if (!first && last.bytesSent > 0) first = last;
       if (last.states.includes('connected') && last.remoteInbound) receiving = last;
-      log('stats', JSON.stringify(last));
+      const reported = (await semantics(page)).match(/trail by ~(\d+) ms/);
+      if (reported) result.reportedLatencyMs = Number(reported[1]);
+      log('stats', JSON.stringify(last), 'reportedLatencyMs', result.reportedLatencyMs);
     }
     await page.screenshot({ path: path.join(OUT, 'web-host.png') });
     result.first = first;
     result.receiving = receiving;
     result.last = last;
     result.pass = Boolean(
-      first && receiving && receiving.bytesSent - first.bytesSent > 20000,
+      first && receiving && receiving.bytesSent - first.bytesSent > 20000 &&
+      result.reportedLatencyMs != null,
     );
   } catch (e) {
     result.error = e.message;

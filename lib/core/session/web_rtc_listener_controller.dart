@@ -11,11 +11,16 @@ import '../network/models/track_info.dart';
 import '../network/signaling/signaling_channel.dart';
 import '../network/webrtc/ice_servers.dart';
 import '../network/webrtc/opus_sdp.dart';
+import '../network/webrtc/playout_latency.dart';
 import 'active_session.dart';
 
 /// How long a peer connection may sit in the transient `disconnected` state
 /// (WiFi blip, NAT rebinding) before the host is treated as gone.
 const Duration _disconnectGrace = Duration(seconds: 10);
+
+/// How often a listener measures its playout latency and reports it to the
+/// host, which delays its own speaker to match.
+const Duration _latencyReportInterval = Duration(seconds: 1);
 
 /// Listener-side controller for a **web-hosted** session: the audio source is
 /// a browser running the Ampme web app, which streams its audio to this
@@ -43,6 +48,12 @@ class WebRtcListenerController extends ChangeNotifier
   rtc.RTCPeerConnection? _pc;
   Timer? _positionTimer;
   Timer? _disconnectTimer;
+  Timer? _latencyTimer;
+  PlayoutLatencyMeter _latencyMeter = PlayoutLatencyMeter();
+
+  /// This device's latest measured playout latency (ms), as reported to the
+  /// host. Null until audio is flowing.
+  int? playoutLatencyMs;
   bool _disposed = false;
   bool _peerConnected = false;
 
@@ -186,6 +197,7 @@ class WebRtcListenerController extends ChangeNotifier
         _peerConnected = true;
         _disconnectTimer?.cancel();
         _disconnectTimer = null;
+        _startLatencyReports();
         if (isReconnecting) {
           isReconnecting = false;
           _notify();
@@ -220,6 +232,28 @@ class WebRtcListenerController extends ChangeNotifier
     } catch (e, st) {
       reportError(e, st, context: 'addWebRtcIceCandidate');
     }
+  }
+
+  /// Measures how far this device's audio trails the host (WebRTC stats) and
+  /// tells the host, so the host can delay its own speaker to match.
+  void _startLatencyReports() {
+    _latencyTimer?.cancel();
+    _latencyMeter = PlayoutLatencyMeter();
+    _latencyTimer = Timer.periodic(_latencyReportInterval, (_) async {
+      final pc = _pc;
+      if (pc == null || _disposed) return;
+      try {
+        final reports = await pc.getStats();
+        final latency = _latencyMeter.update(
+          reports.map((r) => (type: r.type, values: r.values)),
+        );
+        if (latency == null) return;
+        playoutLatencyMs = latency;
+        _signaling?.send({'type': 'stats', 'to': 'host', 'latencyMs': latency});
+      } catch (_) {
+        // Stats are best-effort; the host falls back to its default delay.
+      }
+    });
   }
 
   void _handleAudioBlocked() {
@@ -271,6 +305,8 @@ class WebRtcListenerController extends ChangeNotifier
   }
 
   Future<void> _teardownPeer() async {
+    _latencyTimer?.cancel();
+    _latencyTimer = null;
     final pc = _pc;
     _pc = null;
     _remoteDescriptionSet = false;
