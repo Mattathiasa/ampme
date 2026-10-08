@@ -46,6 +46,20 @@ void main() {
     expect(link.isSyncFresh(), isTrue);
   });
 
+  test('resetSync drops old samples and starts a new burst', () async {
+    final t0 = sent.single.payload['clientSendTimeMs'] as int;
+    incoming.add(
+      ControlMessage.clockSyncResponse(senderId: 'host', clientSendTimeMs: t0, hostTimeMs: t0).encode(),
+    );
+    await pumpEventQueue();
+    expect(link.syncSampleCount, 1);
+    sent.clear();
+    link.resetSync();
+    expect(link.syncSampleCount, 0);
+    expect(link.clockEstimate, isNull);
+    expect(sent.single.type, ControlMessageType.clockSyncRequest);
+  });
+
   test('forwards protocol messages and drops malformed frames', () async {
     final messages = <ControlMessage>[];
     link.messages.listen(messages.add);

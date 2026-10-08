@@ -68,6 +68,15 @@ class PipeControlLink implements ControlLink {
     _scheduleNextSync(_syncBurstInterval);
   }
 
+  /// Drops every clock sample and starts a fresh burst. Used after the song
+  /// transfer: samples taken while megabytes were queued on the link have
+  /// inflated, lopsided round trips that would skew the offset.
+  void resetSync() {
+    _estimator.reset();
+    _lastSyncSampleAt = null;
+    syncNow();
+  }
+
   void _scheduleNextSync(Duration delay) {
     _syncTimer = Timer(delay, () {
       _sendSyncRequest();

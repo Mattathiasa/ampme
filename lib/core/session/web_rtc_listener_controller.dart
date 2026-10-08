@@ -108,6 +108,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   Future<void> connect(SignalingChannel signaling) async {
     _signaling = signaling;
     _progressSub = _files.progress.listen((p) {
+      // The song is in: re-sync the clock on a now-idle link.
+      if (p >= 1 && trackDownloadProgress != null) _link?.resetSync();
       trackDownloadProgress = p >= 1 ? null : p;
       _notify();
     });

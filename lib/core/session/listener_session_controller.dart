@@ -504,6 +504,14 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   void _sendStatus() {
+    // Report the current clock estimate, not the one captured at the last
+    // start: the host times this report with roundTripMs, and a stale value
+    // (e.g. measured while a song was still transferring) skews its drift.
+    final estimate = _client?.clockEstimate;
+    if (estimate != null) {
+      clockOffsetMs = estimate.offsetMs;
+      roundTripMs = estimate.roundTripMs;
+    }
     _client?.send(
       ControlMessage.listenerStatusUpdate(
         senderId: selfDevice.deviceId,
