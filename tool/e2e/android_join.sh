@@ -65,8 +65,9 @@ echo "--- $PKG uid: ${UID_:-<unknown>}"
 # player, then let it play a little before checking how it plays.
 for ((i = 0; i < 180; i += 3)); do
   NOW=$(adb shell dumpsys audio | tr -d '\r')
-  if grep -qE "u/pid:${UID_:-none}/.*state:started" <<<"$NOW"; then
-    echo "Playback started after ~${i}s"
+  STARTED_NOW=$(grep -E "AudioPlaybackConfiguration.*u/pid:${UID_:-none}/.*state:started" <<<"$NOW" || true)
+  if [ -n "$STARTED_NOW" ]; then
+    echo "Playback started after ~${i}s: $STARTED_NOW"
     break
   fi
   sleep 3
@@ -102,6 +103,10 @@ fi
 
 STARTED=$(grep -E "state:started" <<<"$PLAYERS" || true)
 if ! grep -q "usage=USAGE_MEDIA" <<<"$STARTED"; then
+  echo "--- app screen text:"
+  grep -oE 'content-desc="[^"]+"|text="[^"]+"' "$OUT/android-joined.xml" | grep -v '=""' || true
+  echo "--- player-related logcat:"
+  grep -iE "ExoPlayer|AudioTrack|just_audio|MediaCodec.*(error|fail)|ampme" <<<"$LOGCAT" | grep -viE "verbose" | tail -n 60 || true
   echo "FAIL: no started USAGE_MEDIA player — the song isn't playing as media" >&2
   exit 1
 fi

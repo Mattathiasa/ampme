@@ -144,6 +144,7 @@ jobs:
           disable-animations: true
           script: bash tool/e2e/android_join.sh apks/ampme-x86_64.apk "$RUNNER_TEMP/ampme-code.txt" e2e-out
       - name: Check the web host saw the APK playing in sync
+        if: always()
         run: |
           touch "$RUNNER_TEMP/host-stop"
           for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/host-result.json" ] && break; sleep 1; done
