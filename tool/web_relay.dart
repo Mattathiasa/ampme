@@ -27,6 +27,7 @@ import 'package:ampme/core/network/network_utils.dart';
 //   host    -> relay {"type":"offer","to":"<listenerId>","sdp":"..."}
 //   listener-> relay {"type":"answer","to":"host","sdp":"..."}
 //   either  -> relay {"type":"ice","to":"...","candidate":"...","sdpMid":"...","sdpMLineIndex":n}
+//   listener-> relay {"type":"stats","to":"host","latencyMs":n}   (playout latency, ~1/s)
 //   host    -> relay {"type":"end"}
 //   relay   -> client{"type":"welcome","code":"...","relayIp":"...","relayPort":n,"sessionName":"..."}
 //   relay   -> host  {"type":"listener-joined","id":"...","deviceName":"..."}
@@ -303,6 +304,7 @@ class SignalingRelay {
       case 'offer':
       case 'answer':
       case 'ice':
+      case 'stats':
         _route(socket, message);
       case 'end':
         _endSession(socket);

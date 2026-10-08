@@ -243,6 +243,32 @@ void main() {
     await host.close();
   });
 
+  test('latency stats reach the host (tagged with the sender) only', () async {
+    final hub = _FakeHub();
+    final host = _host(hub);
+    await host.connect();
+    final hostEvents = <Map<String, dynamic>>[];
+    host.messages.listen(hostEvents.add);
+    final a = _listener(hub, 'A');
+    final b = _listener(hub, 'B');
+    await a.connect();
+    await b.connect();
+    final bEvents = <Map<String, dynamic>>[];
+    b.messages.listen(bEvents.add);
+
+    a.send({'type': 'stats', 'to': 'host', 'latencyMs': 640});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final stats = hostEvents.singleWhere((m) => m['type'] == 'stats');
+    expect(stats['from'], 'A');
+    expect(stats['latencyMs'], 640);
+    expect(bEvents.where((m) => m['type'] == 'stats'), isEmpty);
+
+    await a.close();
+    await b.close();
+    await host.close();
+  });
+
   test('sessions with different codes are isolated', () async {
     final hub = _FakeHub();
     final host = _host(hub, code: 'AMP-AAAAAA');

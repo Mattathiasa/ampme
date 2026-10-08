@@ -8,6 +8,7 @@ import '../../core/network/models/playback_state.dart';
 import '../../core/network/models/track_info.dart';
 import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/network/webrtc/ice_servers.dart';
+import '../../core/network/webrtc/playout_latency.dart';
 import '../../core/observability/reporting.dart';
 
 /// Largest delay the host's own speaker can be set to (ms). A WebRTC listener
@@ -15,9 +16,20 @@ import '../../core/observability/reporting.dart';
 /// + the phone's audio output latency); 2 s leaves room for bad networks.
 const int maxSyncDelayMs = 2000;
 
-/// Starting delay for the host's speaker while at least one listener is
-/// connected — a typical WebRTC + phone-output latency; the user fine-tunes it.
+/// Delay used for the host's speaker until a listener reports its measured
+/// latency (e.g. it runs an older app that doesn't report).
 const int defaultSyncDelayMs = 250;
+
+/// Range of the manual fine-tune added on top of the measured latency — for
+/// what WebRTC stats can't see (the phone's audio-output buffer, Bluetooth).
+const int minSyncTrimMs = -500;
+const int maxSyncTrimMs = 1000;
+
+/// Measured-latency changes smaller than this aren't applied, so the host's
+/// speaker doesn't keep shifting (each shift is a tiny pitch bend).
+const int _syncDelayDeadbandMs = 15;
+
+const String _trimStorageKey = 'ampme.syncTrimMs';
 
 /// How long a listener's peer connection may sit in the transient
 /// `disconnected` state before it's dropped from the session.
@@ -66,13 +78,35 @@ class WebHostController extends ChangeNotifier {
   /// connected keep playing (WebRTC is direct), new ones can't join.
   bool signalingLost = false;
 
-  /// How long the host's *own speaker* is delayed behind the stream sent to
-  /// listeners, so the host's audio lines up with what listeners hear. Only
-  /// applies while listeners are connected (alone, there's nothing to match).
-  int syncDelayMs = defaultSyncDelayMs;
+  /// Manual fine-tune (ms) added to the measured latency. Remembered in this
+  /// browser across sessions.
+  int syncTrimMs = _loadTrim();
 
-  /// The delay actually applied right now.
-  int get effectiveSyncDelayMs => _listeners.isEmpty ? 0 : syncDelayMs;
+  /// Each listener's smoothed playout latency (ms), as it reports it.
+  final Map<String, int> _latencies = {};
+
+  /// How far the slowest listener's audio trails the stream, measured by the
+  /// listeners themselves (network + jitter buffer). Null until one reports.
+  int? get measuredLatencyMs =>
+      _latencies.isEmpty ? null : _latencies.values.reduce((a, b) => a > b ? a : b);
+
+  /// How long the host's *own speaker* is delayed behind the stream sent to
+  /// listeners, so the host plays at the same moment they do. Only while
+  /// listeners are connected (alone, there's nothing to match).
+  int get effectiveSyncDelayMs => _listeners.isEmpty
+      ? 0
+      : ((measuredLatencyMs ?? defaultSyncDelayMs) + syncTrimMs).clamp(0, maxSyncDelayMs);
+
+  int _appliedSyncDelayMs = 0;
+
+  static int _loadTrim() {
+    try {
+      final v = int.tryParse(web.window.localStorage.getItem(_trimStorageKey) ?? '');
+      return (v ?? 0).clamp(minSyncTrimMs, maxSyncTrimMs);
+    } catch (_) {
+      return 0; // storage blocked (private mode etc.)
+    }
+  }
 
   // ---- Track / playback ----
   TrackInfo? currentTrack;
@@ -168,7 +202,7 @@ class WebHostController extends ChangeNotifier {
       // listeners taps the source *before* this, so the delay only shifts
       // what the host hears.
       _delay ??= ctx.createDelay(maxSyncDelayMs / 1000.0)
-        ..delayTime.value = effectiveSyncDelayMs / 1000.0
+        ..delayTime.value = (_appliedSyncDelayMs = effectiveSyncDelayMs) / 1000.0
         ..connect(ctx.destination);
       _gain ??= ctx.createGain()
         ..gain.value = volume
@@ -244,20 +278,39 @@ class WebHostController extends ChangeNotifier {
     _notify();
   }
 
-  /// Sets how far the host's own speaker trails the stream, live (no restart).
-  /// Slide it up until the host and the listeners' phones sound as one.
-  Future<void> setSyncDelay(int ms) async {
-    syncDelayMs = ms.clamp(0, maxSyncDelayMs);
-    _applySyncDelay();
+  /// Sets the manual fine-tune on top of the measured delay, live (no
+  /// restart): raise it if this speaker still sounds ahead of the phones.
+  Future<void> setSyncTrim(int ms) async {
+    syncTrimMs = ms.clamp(minSyncTrimMs, maxSyncTrimMs);
+    try {
+      web.window.localStorage.setItem(_trimStorageKey, '$syncTrimMs');
+    } catch (_) {}
+    _applySyncDelay(force: true);
     _notify();
   }
 
-  void _applySyncDelay() {
+  /// Moves the speaker delay to [effectiveSyncDelayMs]. Automatic updates
+  /// (listener reports) glide slowly and skip tiny changes; user changes
+  /// ([force]) apply quickly.
+  void _applySyncDelay({bool force = false}) {
     final delay = _delay;
     final ctx = _ctx;
     if (delay == null || ctx == null) return;
-    // Ramp over 50 ms so changing it mid-song doesn't click.
-    delay.delayTime.setTargetAtTime(effectiveSyncDelayMs / 1000.0, ctx.currentTime, 0.05);
+    final target = effectiveSyncDelayMs;
+    final change = (target - _appliedSyncDelayMs).abs();
+    if (!force && change < _syncDelayDeadbandMs) return;
+    _appliedSyncDelayMs = target;
+    delay.delayTime.setTargetAtTime(target / 1000.0, ctx.currentTime, force ? 0.05 : 0.5);
+  }
+
+  void _handleLatencyReport(String from, Object? latency) {
+    if (!_listeners.containsKey(from)) return;
+    final ms = latency is num ? latency.round() : int.tryParse('$latency');
+    if (ms == null || ms < 0 || ms > maxSyncDelayMs) return;
+    final before = measuredLatencyMs;
+    _latencies[from] = smoothLatency(_latencies[from], ms);
+    _applySyncDelay(force: before == null); // first measurement: jump to it
+    if (measuredLatencyMs != before) _notify();
   }
 
   /// Starts a fresh [web.AudioBufferSourceNode] at [offset]. The host's
@@ -330,7 +383,7 @@ class WebHostController extends ChangeNotifier {
         final id = message['id'] as String?;
         if (id == null) return;
         _listeners[id] = message['deviceName'] as String? ?? 'Unknown device';
-        _applySyncDelay();
+        _applySyncDelay(force: true);
         _notify();
         // A re-join (same id) replaces the old connection.
         unawaited(_closePeer(id).then((_) => _connectPeer(id)));
@@ -347,6 +400,10 @@ class WebHostController extends ChangeNotifier {
         final from = message['from'] as String?;
         if (from == null) return;
         unawaited(_applyIceCandidate(from, message));
+      case 'stats':
+        final from = message['from'] as String?;
+        if (from == null) return;
+        _handleLatencyReport(from, message['latencyMs']);
       default:
         break;
     }
@@ -459,9 +516,10 @@ class WebHostController extends ChangeNotifier {
 
   void _dropListener(String id) {
     final removed = _listeners.remove(id) != null;
+    _latencies.remove(id);
     unawaited(_closePeer(id));
     if (removed) {
-      _applySyncDelay();
+      _applySyncDelay(force: true);
       _notify();
     }
   }
@@ -529,6 +587,7 @@ class WebHostController extends ChangeNotifier {
     _remoteSet.clear();
     _pendingIce.clear();
     _listeners.clear();
+    _latencies.clear();
 
     sessionCode = '';
     joinCode = null;

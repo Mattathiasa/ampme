@@ -134,6 +134,8 @@ class RealtimeBroadcastTransport implements BroadcastTransport {
 ///   `listener-joined` locally, which starts the offer)
 /// - offer / answer / ice as in the relay protocol (`ice` is batched on the
 ///   wire as `ice-batch` to stay well under broadcast rate limits)
+/// - listener → host `stats{latencyMs}` every second (playout latency, used by
+///   the host to delay its own speaker into sync)
 /// - listener → host `bye` on leave; host → room `end` when the session ends
 class CloudSignalingChannel implements SignalingChannel {
   CloudSignalingChannel({
@@ -246,6 +248,7 @@ class CloudSignalingChannel implements SignalingChannel {
             _emit({'type': 'listener-left', 'id': from});
           }
         case 'answer':
+        case 'stats':
           _emit(message);
         case 'ice-batch':
           _unbatchIce(message);

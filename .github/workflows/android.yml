@@ -185,6 +185,7 @@ jobs:
 
           - Host from the browser and share an **AMP-XXXXXX** code, link or QR; this app joins it from anywhere.
           - Web-hosted streams play through the phone's **media** audio path in **stereo** (previously routed like a phone call).
+          - **Auto-sync:** the app measures how far its audio trails the host and reports it, so the web host delays its own speaker to play in step (fine-tune slider on the host for the rest).
 
           > **Updating from v1.0.0?** Uninstall it first — v1.0.0 was signed with a different key, so Android won't install over it.
 
