@@ -139,6 +139,11 @@ picture nobody sees. Android writes it to disk, so long films don't sit in
 memory. Picks over 1 GB are refused (the browser holds the file). Which formats work
 depends on the host browser: Chrome/Edge play MP4 (H.264/AAC) and WebM.
 
+The **Android app** can host a video too: it shows the picture and copies the
+video's sound track into an audio-only file (no re-encoding — AAC goes to
+.m4a, Opus/Vorbis to .webm), which is what the other devices receive. Videos
+with another sound codec are sent whole.
+
 **Share a browser tab (YouTube, Spotify Web, …)**: on a computer running
 Chrome or Edge, **Share a browser tab** and pick the tab (with "Share tab
 audio" on). Live audio can't be copied ahead of time, so every device — the

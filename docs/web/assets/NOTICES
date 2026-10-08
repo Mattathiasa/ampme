@@ -2080,6 +2080,10 @@ path_provider_android
 path_provider_foundation
 path_provider_linux
 path_provider_platform_interface
+video_player
+video_player_android
+video_player_avfoundation
+video_player_platform_interface
 
 Copyright 2013 The Flutter Authors
 
@@ -6174,6 +6178,7 @@ SOFTWARE.
 flutter_lints
 path_provider_windows
 plugin_platform_interface
+video_player_web
 xdg_directories
 
 Copyright 2013 The Flutter Authors. All rights reserved.

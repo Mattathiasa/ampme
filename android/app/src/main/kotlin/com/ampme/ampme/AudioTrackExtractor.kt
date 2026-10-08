@@ -45,9 +45,12 @@ object AudioTrackExtractor {
             }
             if (mime == MediaFormat.MIMETYPE_AUDIO_OPUS && Build.VERSION.SDK_INT < 29) return null
 
+            // Only the current track's sound is ever needed: drop older copies.
+            outDir.listFiles()?.forEach { it.delete() }
             outDir.mkdirs()
             val out = File(outDir, "sound_${System.currentTimeMillis()}.$ext")
             val muxer = MediaMuxer(out.path, muxerFormat)
+            var done = false
             try {
                 val dst = muxer.addTrack(format)
                 muxer.start()
@@ -74,11 +77,13 @@ object AudioTrackExtractor {
                     extractor.advance()
                 }
                 muxer.stop()
+                done = true
             } finally {
                 try {
                     muxer.release()
-                } catch (_: Exception) {
+                } catch (ignored: Exception) {
                 }
+                if (!done) out.delete()
             }
             return out.path
         } finally {
