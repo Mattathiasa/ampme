@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:ampme/core/network/file_receive_sink.dart';
 import 'package:ampme/core/network/file_transfer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -33,7 +35,7 @@ void main() {
     await pumpEventQueue();
     expect(progress.last, 1.0);
     // Already received: resolves immediately.
-    expect((await receiver.waitFor('t1')).bytes.length, bytes.length);
+    expect((await receiver.waitFor('t1')).bytes!.length, bytes.length);
     receiver.dispose();
   });
 
@@ -50,7 +52,23 @@ void main() {
     receiver.handleText(FileTransferFrames.start(trackId: 'b', size: 10));
     receiver.handleBinary(_bytes(10));
     receiver.handleText(FileTransferFrames.end('b'));
-    expect((await receiver.waitFor('b')).bytes.length, 10);
+    expect((await receiver.waitFor('b')).bytes!.length, 10);
+    receiver.dispose();
+  });
+
+  test('a file sink writes to disk and returns a file URI', () async {
+    final receiver = FileReceiver(sinkFactory: FileReceiveSink.new);
+    final bytes = _bytes(fileChunkSize * 3 + 7);
+    receiver.handleText(FileTransferFrames.start(trackId: 'v', size: bytes.length, name: 'clip one.mp4'));
+    for (final c in FileTransferFrames.chunks(bytes)) {
+      receiver.handleBinary(c);
+    }
+    receiver.handleText(FileTransferFrames.end('v'));
+    final file = await receiver.waitFor('v');
+    expect(file.bytes, isNull);
+    expect(file.uri!.pathSegments.last, 'clip_one.mp4');
+    expect(await File.fromUri(file.uri!).readAsBytes(), bytes);
+    File.fromUri(file.uri!).parent.deleteSync(recursive: true);
     receiver.dispose();
   });
 }

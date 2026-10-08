@@ -13,6 +13,7 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../utils/id_generator.dart';
+import 'audio_extract.dart';
 import 'sync_math.dart';
 
 /// Range of the host's own speaker offset (ms). Positive delays this
@@ -148,8 +149,21 @@ class WebHostController extends ChangeNotifier {
   PlaybackState playbackState = PlaybackState.stopped;
   Duration position = Duration.zero;
   double volume = 1.0;
+  /// What listeners receive: the picked song, or a video's sound only.
   Uint8List? _fileBytes;
   String? _fileMime;
+  String? _fileSendName;
+
+  /// 0..1 while a video's sound is being prepared for the phones.
+  double? preparingSoundProgress;
+
+  /// For a video file: the muted `<video>` the host screen shows. Its picture
+  /// follows the WebAudio timeline (the sound everyone hears).
+  web.HTMLVideoElement? get video => _video;
+  web.HTMLVideoElement? _video;
+  String? _videoUrl;
+  Timer? _videoStartTimer;
+  Timer? _videoSyncTimer;
 
   // ---- Connected listeners ----
   final Map<String, WebListener> _listeners = {};
@@ -226,9 +240,10 @@ class WebHostController extends ChangeNotifier {
 
   // ---- Track loading ----
 
-  /// Decodes [bytes] (an audio file the user picked), makes it the session's
-  /// track and starts copying it to every listener. Any track already
-  /// playing is stopped.
+  /// Decodes [bytes] (an audio or video file the user picked), makes it the
+  /// session's track and starts copying it to every listener. Any track
+  /// already playing is stopped. For a video, this page shows the picture and
+  /// every device (this one included) plays its sound.
   Future<void> loadTrack(Uint8List bytes, String fileName) async {
     errorMessage = null;
     try {
@@ -243,13 +258,35 @@ class WebHostController extends ChangeNotifier {
       _gain ??= ctx.createGain()
         ..gain.value = volume
         ..connect(ctx.destination);
-      _fileBytes = Uint8List.fromList(bytes);
-      _fileMime = audioMimeFor(fileName);
+      final hasVideo = isVideoFile(fileName);
+      _setVideo(hasVideo ? bytes : null, mime: audioMimeFor(fileName));
+      if (hasVideo) {
+        // Phones only play the sound: send them an audio-only copy, not the
+        // video (smaller, and they never decode a picture nobody sees).
+        preparingSoundProgress = 0;
+        _notify();
+        final audio = await extractAudio(
+          buffer,
+          onProgress: (p) {
+            preparingSoundProgress = p;
+            _notify();
+          },
+        );
+        preparingSoundProgress = null;
+        _fileBytes = audio.bytes;
+        _fileMime = audio.mime;
+        _fileSendName = '${_baseName(fileName)}.${audio.extension}';
+      } else {
+        _fileBytes = bytes;
+        _fileMime = audioMimeFor(fileName);
+        _fileSendName = fileName;
+      }
       final track = TrackInfo(
         trackId: generateId(),
         fileName: fileName,
         streamUrl: '',
         durationMs: (buffer.duration * 1000).round(),
+        hasVideo: hasVideo,
       );
       currentTrack = track;
       position = Duration.zero;
@@ -262,7 +299,9 @@ class WebHostController extends ChangeNotifier {
       }
       _notify();
     } catch (e, st) {
-      errorMessage = 'Could not decode that audio file: $e';
+      preparingSoundProgress = null;
+      errorMessage = 'Could not read the sound in that file '
+          '(is it a format this browser plays?): $e';
       reportError(e, st, context: 'webHost.loadTrack');
       _notify();
     }
@@ -319,6 +358,7 @@ class WebHostController extends ChangeNotifier {
     if (playbackState == PlaybackState.playing) {
       await _synchronizedStart(clamped, asSeek: true);
     } else {
+      _video?.currentTime = clamped.inMilliseconds / 1000; // show that frame
       _notify();
     }
   }
@@ -448,6 +488,7 @@ class WebHostController extends ChangeNotifier {
       _stopReferenceTimer();
       playbackState = PlaybackState.stopped;
       position = Duration(milliseconds: (buffer.duration * 1000).round());
+      _stopVideo();
       _notify();
     }).toJS;
 
@@ -468,6 +509,93 @@ class WebHostController extends ChangeNotifier {
     source.start(when, offsetSec);
     _source = source;
     _startPositionTimer();
+    _startVideo(when, offsetSec);
+  }
+
+  // ---- Video (picture follows the sound) ----
+
+  static String _baseName(String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    return dot > 0 ? fileName.substring(0, dot) : fileName;
+  }
+
+  void _setVideo(Uint8List? bytes, {String? mime}) {
+    _stopVideo();
+    final oldUrl = _videoUrl;
+    _video?.remove();
+    _video = null;
+    _videoUrl = null;
+    if (oldUrl != null) web.URL.revokeObjectURL(oldUrl);
+    if (bytes == null) return;
+    final url = web.URL.createObjectURL(
+      web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mime ?? 'video/mp4')),
+    );
+    _videoUrl = url;
+    _video = (web.document.createElement('video') as web.HTMLVideoElement)
+      ..muted = true // the sound comes from the WebAudio timeline
+      ..playsInline = true
+      ..preload = 'auto'
+      ..controls = false
+      ..src = url
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.objectFit = 'contain'
+      ..style.backgroundColor = 'black';
+  }
+
+  /// Starts the picture at context time [when] from [offsetSec], then keeps
+  /// it on the sound: tiny drift is absorbed by the playback rate, larger
+  /// drift by a seek.
+  void _startVideo(double when, double offsetSec) {
+    final video = _video;
+    final ctx = _ctx;
+    if (video == null || ctx == null) return;
+    _stopVideo();
+    video.currentTime = offsetSec;
+    video.playbackRate = 1;
+    final delayMs = ((when - ctx.currentTime) * 1000).round();
+    _videoStartTimer = Timer(Duration(milliseconds: delayMs < 0 ? 0 : delayMs), () {
+      video.play().toDart.catchError((Object _) => null);
+    });
+    _videoSyncTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (_source == null || video.paused) return;
+      final soundMs = _audibleSoundPositionMs();
+      if (soundMs == null) return;
+      final drift = (video.currentTime * 1000 - soundMs).round();
+      final fix = videoCorrection(drift);
+      if (fix.seek) {
+        video
+          ..currentTime = soundMs / 1000
+          ..playbackRate = 1;
+      } else {
+        video.playbackRate = fix.rate;
+      }
+    });
+  }
+
+  /// Song position currently coming out of this computer's speakers (render
+  /// position minus the output latency the browser reports).
+  double? _audibleSoundPositionMs() {
+    final ctx = _ctx;
+    if (ctx == null) return null;
+    double latency = 0;
+    try {
+      latency = ctx.outputLatency + ctx.baseLatency;
+    } catch (_) {
+      // Not reported by this browser.
+    }
+    final t = ctx.currentTime - latency;
+    if (t < _anchorCtxTime) return null; // not started yet
+    return _anchorOffsetMs + (t - _anchorCtxTime) * 1000;
+  }
+
+  void _stopVideo() {
+    _videoStartTimer?.cancel();
+    _videoStartTimer = null;
+    _videoSyncTimer?.cancel();
+    _videoSyncTimer = null;
+    final video = _video;
+    if (video != null && !video.paused) video.pause();
   }
 
   /// Where the shared timeline (what listeners should be playing) is at host
@@ -483,6 +611,7 @@ class WebHostController extends ChangeNotifier {
 
   /// Stops the current source node (if any) without firing its end handler.
   void _stopSource() {
+    _stopVideo();
     final old = _source;
     _source = null;
     _positionTimer?.cancel();
@@ -646,7 +775,12 @@ class WebHostController extends ChangeNotifier {
     _notify();
     try {
       channel.send(
-        FileTransferFrames.start(trackId: track.trackId, size: bytes.length, mime: _fileMime)
+        FileTransferFrames.start(
+          trackId: track.trackId,
+          size: bytes.length,
+          mime: _fileMime,
+          name: _fileSendName ?? track.fileName,
+        )
             .toJS,
       );
       var sent = 0;
@@ -922,8 +1056,11 @@ class WebHostController extends ChangeNotifier {
     signalingLost = false;
     currentTrack = null;
     _buffer = null;
+    _setVideo(null);
     _fileBytes = null;
     _fileMime = null;
+    _fileSendName = null;
+    preparingSoundProgress = null;
     position = Duration.zero;
     playbackState = PlaybackState.stopped;
 

@@ -13,6 +13,8 @@ class _FakeEngine implements AudioEngine {
   final loaded = <Uri>[];
   final scheduled = <({DateTime at, Duration position})>[];
   final prepared = <Duration>[];
+  final seeks = <Duration>[];
+  Duration Function(DateTime t) estimate = (_) => Duration.zero;
   final _state = StreamController<PlaybackState>.broadcast();
   final _position = StreamController<Duration>.broadcast();
 
@@ -34,13 +36,13 @@ class _FakeEngine implements AudioEngine {
   @override
   Future<void> pause() async {}
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async => seeks.add(position);
   @override
   Future<void> setVolume(double volume) async {}
   @override
   Duration get currentPosition => Duration.zero;
   @override
-  Duration estimatePositionAt(DateTime t) => Duration.zero;
+  Duration estimatePositionAt(DateTime t) => estimate(t);
   @override
   Stream<Duration> get positionStream => _position.stream;
   @override
@@ -136,6 +138,59 @@ void main() {
     );
     expect(session.hostIsPlaying, isTrue);
 
+    session.dispose();
+  });
+
+  test('drift corrections learn how late their seeks land', () async {
+    final toListener = StreamController<String>();
+    final engine = _FakeEngine();
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+      audioEngine: engine,
+      trackResolver: (_) async => Uri.parse('blob:x'),
+    );
+    session.attach(PipeControlLink(deviceId: 'p', incoming: toListener.stream, sendFrame: (_) {}));
+    const track = TrackInfo(trackId: 't', fileName: 'clip.webm', streamUrl: '', durationMs: 60000);
+    toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    engine._state.add(PlaybackState.playing);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Every seek lands 150 ms later than it aims (decoder restart), so the
+    // device plays at `aim - 150`, where aim = target + the learned lead.
+    final start = DateTime.now();
+    int hostPos(DateTime t) => 10000 + t.difference(start).inMilliseconds;
+    engine.estimate = (t) => Duration(milliseconds: hostPos(t) - 150 + session.seekLeadMs);
+    void reference() => toListener.add(
+          ControlMessage.positionSync(
+            senderId: 'host',
+            trackId: 't',
+            positionMs: hostPos(DateTime.now()),
+            hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+          ).encode(),
+        );
+
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.seekLeadMs, 0);
+    expect(engine.seeks, hasLength(1));
+
+    // Too soon after a seek: no new correction, no learning.
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(engine.seeks, hasLength(1));
+    expect(session.seekLeadMs, 0);
+
+    // Once it has settled: learn 70 % of the error and aim further ahead.
+    session.debugAgeLastCorrection(const Duration(seconds: 3));
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(engine.seeks, hasLength(2));
+    expect(session.seekLeadMs, closeTo(105, 10));
+    session.debugAgeLastCorrection(const Duration(seconds: 3));
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.seekLeadMs, closeTo(136, 10), reason: 'converges, no overshoot');
     session.dispose();
   });
 }

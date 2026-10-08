@@ -8,6 +8,7 @@ import 'web_host_controller.dart'
     show ListenerPhase, WebListener, maxSpeakerOffsetMs, minSpeakerOffsetMs;
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
+import 'widgets/web_video_view.dart';
 
 /// The browser build's host screen.
 ///
@@ -211,12 +212,18 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: viewModel.isPickingFile ? null : viewModel.pickAndLoadTrack,
-          icon: const Icon(Icons.library_music),
+          icon: Icon(track?.hasVideo ?? false ? Icons.movie : Icons.library_music),
           label: Text(
-            track == null ? 'Choose a song' : track.fileName,
+            track == null ? 'Choose a song or video' : track.fileName,
             overflow: TextOverflow.ellipsis,
           ),
         ),
+        if (controller.preparingSoundProgress case final progress?) ...[
+          const SizedBox(height: 8),
+          Text('Preparing the sound for the phones… ${(progress * 100).round()}%'),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(value: progress),
+        ],
         if (controller.errorMessage != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -225,6 +232,15 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
               style: TextStyle(color: theme.colorScheme.error),
             ),
           ),
+        if (track != null && controller.video != null) ...[
+          const SizedBox(height: 16),
+          WebVideoView(video: controller.video!),
+          const SizedBox(height: 4),
+          Text(
+            'The picture plays here; every joined device plays the sound.',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
         if (track != null) ...[
           const SizedBox(height: 16),
           Card(

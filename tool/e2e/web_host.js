@@ -4,7 +4,7 @@
 //
 // Env:
 //   BASE         web app URL (e.g. http://127.0.0.1:8080/web/)
-//   TONE         audio file to play (see make_tone.py)
+//   TONE         audio or video file to play (make_tone.py / make_video.sh)
 //   CODE_FILE    where to write the session code once the session is up
 //   RESULT_FILE  where to write the JSON result when done
 //   STOP_FILE    finish when this file appears (or after TIMEOUT_S)
@@ -77,7 +77,7 @@ async function stats(page) {
       '--enable-unsafe-swiftshader',
     ],
   });
-  const ctx = await browser.newContext({ locale: 'en-US', viewport: { width: 420, height: 900 } });
+  const ctx = await browser.newContext({ locale: 'en-US', viewport: { width: 420, height: 1800 } });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(BASE).origin });
   await ctx.addInitScript(() => {
     window.__pcs = [];

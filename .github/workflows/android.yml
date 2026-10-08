@@ -107,7 +107,11 @@ jobs:
         run: |
           npm install --no-save --no-package-lock playwright@1.56.1
           npx playwright install --with-deps chromium
-      - run: python3 tool/e2e/make_tone.py "$RUNNER_TEMP/tone.wav" 240
+      # A video with a click track: the host shows the picture and the APK
+      # plays its sound (WebM — Playwright's Chromium has no H.264/AAC).
+      - run: |
+          command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
+          bash tool/e2e/make_video.sh "$RUNNER_TEMP/clip.webm" 150
       - name: Serve the committed web app
         run: nohup python3 -m http.server 8080 --directory docs > "$RUNNER_TEMP/http.log" 2>&1 &
       - name: Host a session from the web app (headless Chrome)
@@ -115,7 +119,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/e2e-out"
           BASE=http://127.0.0.1:8080/web/ \
-          TONE="$RUNNER_TEMP/tone.wav" \
+          TONE="$RUNNER_TEMP/clip.webm" \
           CODE_FILE="$RUNNER_TEMP/ampme-code.txt" \
           RESULT_FILE="$RUNNER_TEMP/host-result.json" \
           STOP_FILE="$RUNNER_TEMP/host-stop" \
@@ -140,6 +144,7 @@ jobs:
           disable-animations: true
           script: bash tool/e2e/android_join.sh apks/ampme-x86_64.apk "$RUNNER_TEMP/ampme-code.txt" e2e-out
       - name: Check the web host saw the APK playing in sync
+        if: always()
         run: |
           touch "$RUNNER_TEMP/host-stop"
           for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/host-result.json" ] && break; sleep 1; done
@@ -181,11 +186,13 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — sessions hosted from the web app now work everywhere.
+          **Ampme v$VERSION** — every device plays in step, now with videos.
 
-          - Host from the browser and share an **AMP-XXXXXX** code, link or QR; this app joins it from anywhere.
-          - Web-hosted streams play through the phone's **media** audio path in **stereo** (previously routed like a phone call).
-          - **Auto-sync:** the app measures how far its audio trails the host and reports it, so the web host delays its own speaker to play in step (fine-tune slider on the host for the rest).
+          - **Real sync for web-hosted sessions:** the host sends the song to every phone, then all devices — the host included — start at the same instant and correct drift every second (previously a live stream that each phone played with its own delay).
+          - **Videos:** pick a video on the web host; it shows the picture and every phone plays the sound in sync. Big files are saved to storage, not memory.
+          - Join with an **AMP-XXXXXX** code, link or QR from anywhere. The host shows each phone's status (getting the song → Ready → In sync ±N ms).
+
+          > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key).
 
           > **Updating from v1.0.0?** Uninstall it first — v1.0.0 was signed with a different key, so Android won't install over it.
 

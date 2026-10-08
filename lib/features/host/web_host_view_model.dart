@@ -6,6 +6,7 @@ import '../../core/network/signaling/relay_signaling_channel.dart';
 import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/observability/reporting.dart';
 import '../../utils/join_code.dart';
+import 'sync_math.dart';
 import 'web_host_controller.dart';
 
 /// UI-facing wrapper around [WebHostController] for the web host screen:
@@ -109,6 +110,8 @@ class WebHostViewModel extends ChangeNotifier {
     }
   }
 
+  static const int _maxFileBytes = 1024 * 1024 * 1024;
+
   String _nameOrDefault(String name) =>
       name.trim().isEmpty ? 'Ampme session' : name.trim();
 
@@ -120,7 +123,8 @@ class WebHostViewModel extends ChangeNotifier {
       // file_picker 11 defaults to not reading them, which made picking a
       // song silently do nothing.
       final result = await FilePicker.pickFiles(
-        type: FileType.audio,
+        type: FileType.custom,
+        allowedExtensions: pickableExtensions,
         withData: true,
       );
       final picked = result?.files.single;
@@ -128,6 +132,15 @@ class WebHostViewModel extends ChangeNotifier {
       final bytes = picked.bytes;
       if (bytes == null) {
         hostController.errorMessage = 'Could not read that file.';
+        return;
+      }
+      // The browser keeps the file in memory, and every listener downloads
+      // all of it before playing.
+      if (bytes.length > _maxFileBytes) {
+        hostController.errorMessage =
+            'That file is ${bytes.length ~/ (1024 * 1024)} MB. Pick one under '
+            '${_maxFileBytes ~/ (1024 * 1024)} MB — every device has to download '
+            'all of it before playing.';
         return;
       }
       await hostController.loadTrack(bytes, picked.name);
