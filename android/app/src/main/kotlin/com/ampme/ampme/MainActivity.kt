@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -15,6 +16,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         const val CHANNEL = "com.ampme/system_audio_capture"
         const val EVENTS = "com.ampme/system_audio_capture/events"
+        const val MEDIA_CHANNEL = "com.ampme/media"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
 
@@ -37,6 +39,29 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler(::handleMethodCall)
+
+        // Video hosting: copy a video's sound track into an audio-only file
+        // (off the main thread — a long film takes a moment).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method != "extractAudio") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val input = call.argument<String>("path")
+                if (input == null) {
+                    result.error("ARGS", "path is required", null)
+                    return@setMethodCallHandler
+                }
+                Thread {
+                    val out = try {
+                        AudioTrackExtractor.extract(input, File(cacheDir, "extracted_sound"))
+                    } catch (e: Exception) {
+                        null
+                    }
+                    runOnUiThread { result.success(out) }
+                }.start()
+            }
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(

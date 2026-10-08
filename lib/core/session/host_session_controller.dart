@@ -160,7 +160,15 @@ class HostSessionController extends ChangeNotifier {
   /// 10+); the host UI hides the "Broadcast device audio" control otherwise.
   Future<bool> isSystemAudioSupported() => _systemAudioCapture.isSupported();
 
-  Future<void> loadTrack(File file, {required String fileName}) async {
+  /// The picked video's path when the current track is a video: the host
+  /// shows it, while [loadTrack]'s file (its sound) is what every device
+  /// plays.
+  String? videoPath;
+
+  /// Loads [file] as the session's track. For a video, [file] is its sound
+  /// (or the video itself if the sound couldn't be extracted) and
+  /// [videoPath] the original video, shown on the host.
+  Future<void> loadTrack(File file, {required String fileName, String? videoPath}) async {
     // A file and a live broadcast are mutually exclusive sources.
     if (_micBroadcaster.isBroadcasting) await stopLiveBroadcast();
     if (_systemAudioCapture.isCapturing) await stopSystemAudioBroadcast();
@@ -172,11 +180,13 @@ class HostSessionController extends ChangeNotifier {
 
     final ip = localIp ?? await getLocalWifiIp();
     final streamUrl = 'http://$ip:${_httpServer.port}/stream/$trackId';
+    this.videoPath = videoPath;
     currentTrack = TrackInfo(
       trackId: trackId,
       fileName: fileName,
       streamUrl: streamUrl,
       durationMs: duration?.inMilliseconds ?? 0,
+      hasVideo: videoPath != null,
     );
 
     _controlServer.broadcast(

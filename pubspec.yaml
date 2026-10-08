@@ -69,6 +69,7 @@ dependencies:
   # Supabase Realtime broadcast — cloud signaling (WebRTC handshake only) for
   # browser-hosted sessions, so they work from any origin without a LAN relay.
   realtime_client: ^2.13.0
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:
