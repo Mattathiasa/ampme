@@ -5,6 +5,7 @@
 # gives H.264/AAC (real Chrome, Edge, Safari).
 #
 # Usage: make_video.sh OUT.(webm|mp4) [SECONDS]
+# AUDIO_ONLY=1 drops the picture (same container and sound codec).
 set -euo pipefail
 OUT=$1
 SECONDS_=${2:-90}
@@ -15,4 +16,4 @@ esac
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i "testsrc2=size=640x360:rate=25:duration=${SECONDS_}" \
   -f lavfi -i "aevalsrc='0.8*sin(2*PI*1000*t)*lt(mod(t\,0.5)\,0.01)':s=44100:c=stereo:d=${SECONDS_}" \
-  "${CODECS[@]}" -shortest "$OUT"
+  ${AUDIO_ONLY:+-vn} "${CODECS[@]}" -shortest "$OUT"

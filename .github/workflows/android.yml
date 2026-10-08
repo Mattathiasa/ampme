@@ -111,7 +111,8 @@ jobs:
       # plays its sound (WebM — Playwright's Chromium has no H.264/AAC).
       - run: |
           command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
-          bash tool/e2e/make_video.sh "$RUNNER_TEMP/clip.webm" 150
+          # Experiment: sound only, to tell video-track load from Opus playback.
+          AUDIO_ONLY=1 bash tool/e2e/make_video.sh "$RUNNER_TEMP/clip.webm" 150
       - name: Serve the committed web app
         run: nohup python3 -m http.server 8080 --directory docs > "$RUNNER_TEMP/http.log" 2>&1 &
       - name: Host a session from the web app (headless Chrome)
