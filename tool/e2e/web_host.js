@@ -1,22 +1,21 @@
 // Hosts an Ampme session from the web app in headless Chromium and keeps it
-// streaming, so another device — e.g. an Android emulator running the APK —
+// playing, so another device — e.g. an Android emulator running the APK —
 // can join it in an end-to-end test.
 //
 // Env:
 //   BASE         web app URL (e.g. http://127.0.0.1:8080/web/)
-//   TONE         audio file to stream (see make_tone.py)
+//   TONE         audio file to play (see make_tone.py)
 //   CODE_FILE    where to write the session code once the session is up
 //   RESULT_FILE  where to write the JSON result when done
 //   STOP_FILE    finish when this file appears (or after TIMEOUT_S)
 //   OUT          directory for screenshots
 //   TIMEOUT_S    overall limit (default 900)
 //
-// Passes (exit 0) when a listener joined and, while the peer connection was
-// `connected`, audio bytes flowed and the listener sent RTCP receiver reports
-// (proof it is actually receiving). The final state doesn't matter: the
-// listener device may already be gone when the host is told to stop. The
-// listener must also have reported its measured playout latency (the host's
-// sync card shows "trail by ~N ms"), which drives the host's speaker delay.
+// Passes (exit 0) when a listener joined, received the whole song over the
+// file data channel (the host shows it "Ready"), and — once playing — its
+// reported playhead stayed within 50 ms of the host's timeline (the host
+// shows "In sync (N ms)"). The final state doesn't matter: the listener
+// device may already be gone when the host is told to stop.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -52,16 +51,14 @@ async function waitForText(page, re, ms) {
 
 async function stats(page) {
   return page.evaluate(async () => {
-    const r = { states: [], bytesSent: 0, remoteInbound: null, fmtp: [] };
+    const r = { states: [], channels: {} };
     for (const pc of window.__pcs || []) {
       r.states.push(pc.connectionState);
       const s = await pc.getStats();
       s.forEach((x) => {
-        if (x.type === 'outbound-rtp' && x.kind === 'audio') r.bytesSent += x.bytesSent;
-        if (x.type === 'remote-inbound-rtp' && x.kind === 'audio') {
-          r.remoteInbound = { packetsLost: x.packetsLost, jitter: x.jitter, roundTripTime: x.roundTripTime };
+        if (x.type === 'data-channel') {
+          r.channels[x.label] = { state: x.state, bytesSent: x.bytesSent, bytesReceived: x.bytesReceived };
         }
-        if (x.type === 'codec' && /opus/i.test(x.mimeType)) r.fmtp.push(x.sdpFmtpLine);
       });
     }
     return r;
@@ -126,30 +123,31 @@ async function stats(page) {
 
     await waitForText(page, /Listener-/, TIMEOUT_MS - (Date.now() - started));
     result.listenerSeen = true;
-    log('listener joined');
+    log('listener joined; sending the song');
+    await waitForText(page, /\bReady\b/, 180000);
+    result.songDelivered = true;
+    log('listener has the song', JSON.stringify(await stats(page)));
     await page.mouse.move(5, 880);
     await page.getByRole('button', { name: 'Play' }).first().click({ force: true });
     log('playing');
 
-    let first = null;
+    result.drifts = [];
     let last = null;
-    let receiving = null; // latest sample: connected + receiver reports
     while (!fs.existsSync(STOP_FILE) && Date.now() - started < TIMEOUT_MS) {
       await page.waitForTimeout(2000);
       last = await stats(page);
-      if (!first && last.bytesSent > 0) first = last;
-      if (last.states.includes('connected') && last.remoteInbound) receiving = last;
-      const reported = (await semantics(page)).match(/trail by ~(\d+) ms/);
-      if (reported) result.reportedLatencyMs = Number(reported[1]);
-      log('stats', JSON.stringify(last), 'reportedLatencyMs', result.reportedLatencyMs);
+      const text = await semantics(page);
+      const m = text.match(/(In sync|Catching up) \(([-+]?\d+) ms\)/);
+      if (m) result.drifts.push(Number(m[2]));
+      log('stats', JSON.stringify(last), 'listener status', m ? m[0] : '(none)');
     }
     await page.screenshot({ path: path.join(OUT, 'web-host.png') });
-    result.first = first;
-    result.receiving = receiving;
     result.last = last;
+    // Judge the settled readings (the first ones cover start-up).
+    const settled = result.drifts.slice(2);
     result.pass = Boolean(
-      first && receiving && receiving.bytesSent - first.bytesSent > 20000 &&
-      result.reportedLatencyMs != null,
+      result.songDelivered && settled.length >= 3 &&
+      settled.slice(-3).every((d) => Math.abs(d) <= 50),
     );
   } catch (e) {
     result.error = e.message;

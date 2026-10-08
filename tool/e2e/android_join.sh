@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Drives the Ampme Android app on a running emulator/device (via adb):
 # installs the APK, joins the browser-hosted session whose code is in
-# CODE_FILE, and checks that the WebRTC stream is playing through Android's
-# *media* audio path (not the voice-call path).
+# CODE_FILE, waits for the song to arrive and play, and checks that it plays
+# through Android's *media* audio path (not the voice-call path).
 #
 # Usage: android_join.sh APK CODE_FILE [OUT_DIR]
 set -euo pipefail
@@ -50,11 +50,14 @@ tap "$(wait_for 'class:android.widget.EditText' 60)"
 adb shell input text "$CODE"
 adb shell input keyevent KEYCODE_BACK # close the keyboard
 tap "$(wait_for '^Join$' 30)"
-wait_for 'Live stream' 90 >/dev/null
-echo "Joined: the app shows the live stream"
+wait_for "${TRACK_NAME:-tone\\.wav}" 90 >/dev/null
+echo "Joined: the app shows the host's song"
+wait_for 'In sync' 120 >/dev/null
+echo "Clock synced with the host"
 
-# Let audio flow, then check how Android is playing it.
-sleep 12
+# The host starts playback once the song has arrived; let it play, then check
+# how Android is playing it.
+sleep 25
 adb exec-out screencap -p > "$OUT/android-joined.png"
 ui > "$OUT/android-joined.xml"
 adb logcat -d > "$OUT/logcat.txt"
@@ -89,7 +92,7 @@ fi
 
 STARTED=$(grep -E "state:started" <<<"$PLAYERS" || true)
 if ! grep -q "usage=USAGE_MEDIA" <<<"$STARTED"; then
-  echo "FAIL: no started USAGE_MEDIA player — WebRTC audio isn't playing as media" >&2
+  echo "FAIL: no started USAGE_MEDIA player — the song isn't playing as media" >&2
   exit 1
 fi
 if grep -q "USAGE_VOICE_COMMUNICATION" <<<"$STARTED"; then

@@ -276,7 +276,7 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Your browser paused the stream until you tap.',
+            'Your browser won’t start audio until you tap.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall,
           ),
@@ -299,8 +299,8 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
         ),
         const SizedBox(height: 16),
         if (session.isLiveSession)
-          // Live streams (mic broadcast / web-hosted WebRTC) have no clock
-          // sync or position to measure, so show a live chip instead.
+          // A live mic broadcast has no position to sync, so show a live
+          // chip instead.
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -332,6 +332,12 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
             roundTripMs: session.roundTripMs,
           ),
         const SizedBox(height: 16),
+        if (session.trackDownloadProgress case final progress?) ...[
+          Text('Getting the song from the host… ${(progress * 100).round()}%'),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: progress),
+          const SizedBox(height: 16),
+        ],
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),

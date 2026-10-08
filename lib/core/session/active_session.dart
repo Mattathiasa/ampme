@@ -14,8 +14,8 @@ abstract class ActiveSession extends ChangeNotifier {
   /// The host's session name, once known.
   String? get sessionName;
 
-  /// True for a stream with no seekable position (live mic broadcast, or a
-  /// web-hosted WebRTC session). The UI shows the live view in that case.
+  /// True for a stream with no seekable position (live mic broadcast). The
+  /// UI shows the live view in that case.
   bool get isLiveSession;
 
   /// The track currently being streamed. Null until the session reports one.
@@ -36,8 +36,7 @@ abstract class ActiveSession extends ChangeNotifier {
   /// True while the control connection is being re-established.
   bool get isReconnecting;
 
-  /// Host<->local clock offset estimate, when a clock sync applies
-  /// (WebRTC sessions are live and don't do clock sync — null there).
+  /// Host<->local clock offset estimate, once clock sync has run.
   int? get clockOffsetMs;
 
   /// Round-trip time of the clock-sync exchange, when available.
@@ -52,4 +51,8 @@ abstract class ActiveSession extends ChangeNotifier {
 
   /// Sets this device's local playback volume without affecting other devices.
   Future<void> setLocalVolume(double value);
+
+  /// Fraction (0..1) of the current song still being copied to this device
+  /// (browser-hosted sessions send the file before playing); null otherwise.
+  double? get trackDownloadProgress;
 }
