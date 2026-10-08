@@ -7,6 +7,7 @@ class TrackInfo {
     required this.streamUrl,
     required this.durationMs,
     this.isLive = false,
+    this.hasVideo = false,
   });
 
   final String trackId;
@@ -19,12 +20,16 @@ class TrackInfo {
   /// rather than on a scheduled start.
   final bool isLive;
 
+  /// The host is showing this file's video; listeners play its sound.
+  final bool hasVideo;
+
   Map<String, dynamic> toJson() => {
     'trackId': trackId,
     'fileName': fileName,
     'streamUrl': streamUrl,
     'durationMs': durationMs,
     'isLive': isLive,
+    if (hasVideo) 'hasVideo': true,
   };
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) {
@@ -35,6 +40,7 @@ class TrackInfo {
       durationMs: json['durationMs'] as int,
       // Tolerate older hosts that don't send the field.
       isLive: json['isLive'] as bool? ?? false,
+      hasVideo: json['hasVideo'] as bool? ?? false,
     );
   }
 }

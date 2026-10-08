@@ -33,6 +33,22 @@ void main() {
     );
   });
 
+  test('video follows the audio: rate nudges for small drift, seek for large', () {
+    expect(videoCorrection(10), (seek: false, rate: 1.0));
+    expect(videoCorrection(100).rate, lessThan(1.0));
+    expect(videoCorrection(-100).rate, greaterThan(1.0));
+    expect(videoCorrection(140).rate, greaterThanOrEqualTo(0.95));
+    expect(videoCorrection(400).seek, isTrue);
+    expect(videoCorrection(-400).seek, isTrue);
+  });
+
+  test('video files are recognised', () {
+    expect(isVideoFile('Clip.MP4'), isTrue);
+    expect(isVideoFile('movie.webm'), isTrue);
+    expect(isVideoFile('song.mp3'), isFalse);
+    expect(pickableExtensions, containsAll(['mp3', 'mp4']));
+  });
+
   test('audio MIME types by extension', () {
     expect(audioMimeFor('song.MP3'), 'audio/mpeg');
     expect(audioMimeFor('a.b.m4a'), 'audio/mp4');

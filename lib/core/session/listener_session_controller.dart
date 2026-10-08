@@ -53,6 +53,13 @@ class ListenerSessionController extends ChangeNotifier
 
   ControlLink? _client;
 
+  /// How far ahead of the target a drift-correction seek aims, learned from
+  /// the error left after the previous correction: a seek in a compressed
+  /// file (decoder restart from a keyframe) or on a slow device takes a
+  /// while, and without this every correction lands late by that much.
+  int seekLeadMs = 0;
+  DateTime? _lastCorrectionAt;
+
   /// Whether the host's latest command was play/seek (vs pause): lets a
   /// browser listener that was blocked from autoplaying start on a tap.
   bool hostIsPlaying = false;
@@ -232,6 +239,8 @@ class ListenerSessionController extends ChangeNotifier
         unawaited(_pendingWelcome!);
       case ControlMessageType.trackChanged:
         hostIsPlaying = false;
+        seekLeadMs = 0; // a different file seeks differently
+        _lastCorrectionAt = null;
         currentTrack = TrackInfo.fromJson(message.payload);
         // Pre-buffer the new track from its start (the host loads tracks
         // paused at position 0) so a follow-up play command starts instantly.
@@ -500,7 +509,15 @@ class ListenerSessionController extends ChangeNotifier
     // so it isn't audible.
     if (drift.abs() < 30) return;
 
-    unawaited(audioEngine.seek(Duration(milliseconds: target)));
+    // Still off right after a correction: that correction landed `drift`
+    // away from where it aimed, so aim that much further next time.
+    final now = DateTime.now();
+    final last = _lastCorrectionAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 4)) {
+      seekLeadMs = (seekLeadMs - drift).clamp(0, 600);
+    }
+    _lastCorrectionAt = now;
+    unawaited(audioEngine.seek(Duration(milliseconds: target + seekLeadMs)));
   }
 
   void _sendStatus() {

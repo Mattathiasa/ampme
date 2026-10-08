@@ -13,6 +13,8 @@ class _FakeEngine implements AudioEngine {
   final loaded = <Uri>[];
   final scheduled = <({DateTime at, Duration position})>[];
   final prepared = <Duration>[];
+  final seeks = <Duration>[];
+  Duration Function(DateTime t) estimate = (_) => Duration.zero;
   final _state = StreamController<PlaybackState>.broadcast();
   final _position = StreamController<Duration>.broadcast();
 
@@ -34,13 +36,13 @@ class _FakeEngine implements AudioEngine {
   @override
   Future<void> pause() async {}
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async => seeks.add(position);
   @override
   Future<void> setVolume(double volume) async {}
   @override
   Duration get currentPosition => Duration.zero;
   @override
-  Duration estimatePositionAt(DateTime t) => Duration.zero;
+  Duration estimatePositionAt(DateTime t) => estimate(t);
   @override
   Stream<Duration> get positionStream => _position.stream;
   @override
@@ -136,6 +138,46 @@ void main() {
     );
     expect(session.hostIsPlaying, isTrue);
 
+    session.dispose();
+  });
+
+  test('drift corrections learn how late their seeks land', () async {
+    final toListener = StreamController<String>();
+    final engine = _FakeEngine();
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+      audioEngine: engine,
+      trackResolver: (_) async => Uri.parse('blob:x'),
+    );
+    session.attach(PipeControlLink(deviceId: 'p', incoming: toListener.stream, sendFrame: (_) {}));
+    const track = TrackInfo(trackId: 't', fileName: 'clip.webm', streamUrl: '', durationMs: 60000);
+    toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    engine._state.add(PlaybackState.playing);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // The listener always plays 150 ms behind whatever it was told.
+    final start = DateTime.now();
+    int hostPos(DateTime t) => 10000 + t.difference(start).inMilliseconds;
+    engine.estimate = (t) => Duration(milliseconds: hostPos(t) - 150);
+    void reference() => toListener.add(
+          ControlMessage.positionSync(
+            senderId: 'host',
+            trackId: 't',
+            positionMs: hostPos(DateTime.now()),
+            hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+          ).encode(),
+        );
+
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.seekLeadMs, 0);
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.seekLeadMs, closeTo(150, 10));
+    final first = engine.seeks[0].inMilliseconds - hostPos(DateTime.now());
+    final second = engine.seeks[1].inMilliseconds - hostPos(DateTime.now());
+    expect(second - first, closeTo(150, 30));
     session.dispose();
   });
 }

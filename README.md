@@ -127,6 +127,15 @@ join link, or the QR code (any phone camera opens the link and joins).
 Only the handshake touches the cloud — the song and the sync messages flow
 device-to-device.
 
+**Videos**: pick a video (MP4, MOV, WebM, MKV) instead of a song and the
+browser host shows the picture while every joined device — the host's own
+speakers included — plays its sound in sync, so the phones become extra
+speakers for the movie. The picture follows the sound (small drift is
+absorbed by a ±5 % playback-rate nudge, larger drift by a seek). The whole
+file is copied to each device first (Android writes it to disk, so big files
+don't sit in memory); files over 1 GB are refused. Which formats work
+depends on the host browser: Chrome/Edge play MP4 (H.264/AAC) and WebM.
+
 ```sh
 flutter run -d chrome     # works out of the box; no relay needed
 ```

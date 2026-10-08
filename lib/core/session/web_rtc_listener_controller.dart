@@ -7,6 +7,7 @@ import '../../utils/user_activation.dart';
 import '../audio/audio_engine.dart';
 import '../audio/bytes_uri.dart';
 import '../audio/remote_audio_sink.dart';
+import '../network/default_receive_sink.dart';
 import '../network/file_transfer.dart';
 import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
@@ -50,7 +51,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   final DeviceInfo selfDevice;
 
   late final ListenerSessionController _session;
-  final FileReceiver _files = FileReceiver();
+  final FileReceiver _files = FileReceiver(sinkFactory: defaultReceiveSinkFactory);
   StreamSubscription<double>? _progressSub;
 
   /// Playable URI per received track (temp file / blob URL), reused when the
@@ -274,7 +275,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     if (cached != null) return cached;
     final file = await _files.waitFor(track.trackId);
     if (_disposed) return null;
-    final uri = await bytesToUri(file.bytes, name: track.fileName, mime: file.mime);
+    final uri = file.uri ??
+        await bytesToUri(file.bytes!, name: track.fileName, mime: file.mime);
     // One song at a time: free the previous one.
     for (final old in _uris.values) {
       releaseBytesUri(old);

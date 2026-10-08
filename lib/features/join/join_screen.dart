@@ -338,6 +338,16 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           LinearProgressIndicator(value: progress),
           const SizedBox(height: 16),
         ],
+        if (track?.hasVideo ?? false) ...[
+          const Row(
+            children: [
+              Icon(Icons.movie_outlined, size: 18),
+              SizedBox(width: 8),
+              Expanded(child: Text('Video on the host screen — this device plays its sound')),
+            ],
+          ),
+          const SizedBox(height: 12),
+        ],
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
