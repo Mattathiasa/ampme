@@ -59,6 +59,14 @@ class ListenerSessionController extends ChangeNotifier
   /// while, and without this every correction lands late by that much.
   int seekLeadMs = 0;
   DateTime? _lastCorrectionAt;
+  static const Duration _correctionSettleTime = Duration(milliseconds: 2000);
+
+  /// Test hook: pretends the last drift correction happened [age] ago.
+  @visibleForTesting
+  void debugAgeLastCorrection(Duration age) {
+    final last = _lastCorrectionAt;
+    if (last != null) _lastCorrectionAt = last.subtract(age);
+  }
 
   /// Whether the host's latest command was play/seek (vs pause): lets a
   /// browser listener that was blocked from autoplaying start on a tap.
@@ -509,12 +517,20 @@ class ListenerSessionController extends ChangeNotifier
     // so it isn't audible.
     if (drift.abs() < 30) return;
 
-    // Still off right after a correction: that correction landed `drift`
-    // away from where it aimed, so aim that much further next time.
     final now = DateTime.now();
     final last = _lastCorrectionAt;
-    if (last != null && now.difference(last) < const Duration(seconds: 4)) {
-      seekLeadMs = (seekLeadMs - drift).clamp(0, 600);
+    if (last != null) {
+      final since = now.difference(last);
+      // Let the previous seek settle (rebuffer, fresh position updates)
+      // before judging it or seeking again: back-to-back seeks on a slow
+      // device starve the audio output and make the drift worse.
+      if (since < _correctionSettleTime) return;
+      // Still off after a recent correction: it landed `drift` away from
+      // where it aimed. Move the aim 70 % of that way (damped, so noisy
+      // readings can't make it oscillate).
+      if (since < const Duration(seconds: 8)) {
+        seekLeadMs = (seekLeadMs - drift * 0.7).round().clamp(0, 400);
+      }
     }
     _lastCorrectionAt = now;
     unawaited(audioEngine.seek(Duration(milliseconds: target + seekLeadMs)));

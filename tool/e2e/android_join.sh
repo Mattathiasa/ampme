@@ -73,10 +73,18 @@ for ((i = 0; i < 180; i += 3)); do
   sleep 3
 done
 sleep 10
+# A drift-correction seek briefly flushes the player; look for a started
+# media player over a short window rather than a single snapshot.
+for ((i = 0; i < 20; i += 2)); do
+  adb shell dumpsys audio > "$OUT/dumpsys-audio.txt"
+  if grep -qE "u/pid:${UID_:-none}/.*state:started.*USAGE_MEDIA|u/pid:${UID_:-none}/.*state:started.*usage=USAGE_MEDIA" <(tr -d '\r' < "$OUT/dumpsys-audio.txt"); then
+    break
+  fi
+  sleep 2
+done
 adb exec-out screencap -p > "$OUT/android-joined.png"
 ui > "$OUT/android-joined.xml"
 adb logcat -d > "$OUT/logcat.txt"
-adb shell dumpsys audio > "$OUT/dumpsys-audio.txt"
 
 # Everything below avoids `cmd | grep -q` / `grep -m1` pipelines: those exit
 # early, the producer gets SIGPIPE, and with `pipefail` the pipeline "fails"

@@ -156,10 +156,11 @@ void main() {
     engine._state.add(PlaybackState.playing);
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    // The listener always plays 150 ms behind whatever it was told.
+    // Every seek lands 150 ms later than it aims (decoder restart), so the
+    // device plays at `aim - 150`, where aim = target + the learned lead.
     final start = DateTime.now();
     int hostPos(DateTime t) => 10000 + t.difference(start).inMilliseconds;
-    engine.estimate = (t) => Duration(milliseconds: hostPos(t) - 150);
+    engine.estimate = (t) => Duration(milliseconds: hostPos(t) - 150 + session.seekLeadMs);
     void reference() => toListener.add(
           ControlMessage.positionSync(
             senderId: 'host',
@@ -172,12 +173,24 @@ void main() {
     reference();
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(session.seekLeadMs, 0);
+    expect(engine.seeks, hasLength(1));
+
+    // Too soon after a seek: no new correction, no learning.
     reference();
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(session.seekLeadMs, closeTo(150, 10));
-    final first = engine.seeks[0].inMilliseconds - hostPos(DateTime.now());
-    final second = engine.seeks[1].inMilliseconds - hostPos(DateTime.now());
-    expect(second - first, closeTo(150, 30));
+    expect(engine.seeks, hasLength(1));
+    expect(session.seekLeadMs, 0);
+
+    // Once it has settled: learn 70 % of the error and aim further ahead.
+    session.debugAgeLastCorrection(const Duration(seconds: 3));
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(engine.seeks, hasLength(2));
+    expect(session.seekLeadMs, closeTo(105, 10));
+    session.debugAgeLastCorrection(const Duration(seconds: 3));
+    reference();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.seekLeadMs, closeTo(136, 10), reason: 'converges, no overshoot');
     session.dispose();
   });
 }
