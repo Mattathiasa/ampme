@@ -201,10 +201,10 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — every device plays in step: songs, videos, and now any browser tab.
+          **Ampme v$VERSION** — every device plays in step: songs, videos (now hostable from the Android app too), and any browser tab.
 
           - **Share a browser tab (YouTube…):** on the web host (Chrome/Edge on a computer), share a tab and every device — the host included — plays its sound together, 1 s behind the tab.
-          - **Videos:** pick a video on the web host; it shows the picture and every phone plays the sound in sync (sent as compact Opus audio).
+          - **Videos, from the web or the Android app:** pick a video on the host; it shows the picture and every other device plays the sound in sync (phones get the sound only, not the whole video).
           - **Real sync for web-hosted sessions:** every device plays its own copy, started at the same instant, with drift correction every second.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).

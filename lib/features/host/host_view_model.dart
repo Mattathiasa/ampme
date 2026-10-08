@@ -8,6 +8,8 @@ import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/host_session_controller.dart';
 import '../../utils/id_generator.dart';
+import '../../core/media/video_audio_extractor.dart';
+import 'sync_math.dart';
 
 /// Wraps [HostSessionController] with the UI-facing concerns a
 /// `HostScreen` needs: permission requests, file picking, and surfacing
@@ -28,6 +30,8 @@ class HostViewModel extends ChangeNotifier {
   final HostSessionController hostController;
 
   bool isStarting = false;
+  /// True while a picked video's sound track is being extracted.
+  bool isPreparingVideo = false;
   bool isPickingFile = false;
   bool isTogglingLive = false;
   bool isTogglingSystemAudio = false;
@@ -75,11 +79,28 @@ class HostViewModel extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      final result = await FilePicker.pickFiles(type: FileType.audio);
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: pickableExtensions,
+      );
       final picked = result?.files.single;
       final path = picked?.path;
       if (path == null) return;
-      await hostController.loadTrack(File(path), fileName: picked!.name);
+      if (isVideoFile(picked!.name)) {
+        // Listeners only play the sound: serve them the sound track alone
+        // (much smaller, and no picture for their player to decode).
+        isPreparingVideo = true;
+        notifyListeners();
+        final soundPath = await extractAudioTrack(path);
+        isPreparingVideo = false;
+        await hostController.loadTrack(
+          File(soundPath ?? path),
+          fileName: picked.name,
+          videoPath: path,
+        );
+      } else {
+        await hostController.loadTrack(File(path), fileName: picked.name);
+      }
     } catch (e, st) {
       errorMessage = 'Failed to load track: $e';
       reportError(e, st, context: 'pickAndLoadTrack');

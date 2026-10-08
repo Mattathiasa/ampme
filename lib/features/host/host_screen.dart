@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/network/models/playback_state.dart';
 import 'host_view_model.dart';
 import 'widgets/listener_status_tile.dart';
+import 'widgets/native_video_view.dart';
 import 'widgets/transport_controls.dart';
 
 class HostScreen extends StatelessWidget {
@@ -140,9 +142,9 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: (viewModel.isPickingFile || anyLiveSource) ? null : viewModel.pickAndLoadTrack,
-          icon: const Icon(Icons.library_music),
+          icon: Icon(track?.hasVideo ?? false ? Icons.movie : Icons.library_music),
           label: Text(
-            (track == null || track.isLive) ? 'Choose a song' : track.fileName,
+            (track == null || track.isLive) ? 'Choose a song or video' : track.fileName,
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -174,6 +176,25 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
           const SizedBox(height: 16),
           const _DeviceAudioBroadcastCard(),
         ] else if (track != null) ...[
+          if (viewModel.isPreparingVideo) ...[
+            const SizedBox(height: 12),
+            const LinearProgressIndicator(),
+            const SizedBox(height: 4),
+            const Text('Preparing the sound for the phones…'),
+          ],
+          if (track.hasVideo && controller.videoPath != null) ...[
+            const SizedBox(height: 16),
+            NativeVideoView(
+              path: controller.videoPath!,
+              engine: controller.audioEngine,
+              playing: controller.playbackState == PlaybackState.playing,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'The picture plays here; every joined device plays the sound.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
           const SizedBox(height: 16),
           Card(
             child: Padding(
