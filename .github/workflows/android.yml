@@ -185,11 +185,13 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — sessions hosted from the web app now work everywhere.
+          **Ampme v$VERSION** — every device plays in step, now with videos.
 
-          - Host from the browser and share an **AMP-XXXXXX** code, link or QR; this app joins it from anywhere.
-          - Web-hosted streams play through the phone's **media** audio path in **stereo** (previously routed like a phone call).
-          - **Auto-sync:** the app measures how far its audio trails the host and reports it, so the web host delays its own speaker to play in step (fine-tune slider on the host for the rest).
+          - **Real sync for web-hosted sessions:** the host sends the song to every phone, then all devices — the host included — start at the same instant and correct drift every second (previously a live stream that each phone played with its own delay).
+          - **Videos:** pick a video on the web host; it shows the picture and every phone plays the sound in sync. Big files are saved to storage, not memory.
+          - Join with an **AMP-XXXXXX** code, link or QR from anywhere. The host shows each phone's status (getting the song → Ready → In sync ±N ms).
+
+          > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key).
 
           > **Updating from v1.0.0?** Uninstall it first — v1.0.0 was signed with a different key, so Android won't install over it.
 
