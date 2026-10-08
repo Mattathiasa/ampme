@@ -55,9 +55,23 @@ echo "Joined: the app shows the host's song"
 wait_for 'In sync' 120 >/dev/null
 echo "Clock synced with the host"
 
-# The host starts playback once the song has arrived; let it play, then check
-# how Android is playing it.
-sleep 25
+PKG_LINE=$(adb shell pm list packages -U "$PKG" | tr -d '\r')
+UID_=$(sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' <<<"$PKG_LINE" | sed -n 1p)
+echo "--- $PKG uid: ${UID_:-<unknown>}"
+
+# The clock syncs as soon as the app joins, but the host only starts playing
+# once the whole file has reached this device — over the emulator's NAT that
+# can take a while. Wait (bounded) until the app actually has a started
+# player, then let it play a little before checking how it plays.
+for ((i = 0; i < 180; i += 3)); do
+  NOW=$(adb shell dumpsys audio | tr -d '\r')
+  if grep -qE "u/pid:${UID_:-none}/.*state:started" <<<"$NOW"; then
+    echo "Playback started after ~${i}s"
+    break
+  fi
+  sleep 3
+done
+sleep 10
 adb exec-out screencap -p > "$OUT/android-joined.png"
 ui > "$OUT/android-joined.xml"
 adb logcat -d > "$OUT/logcat.txt"
@@ -75,10 +89,6 @@ if [ -n "$CRASH" ]; then
 fi
 echo "--- app errors in logcat (flutter / WebRTC), if any:"
 grep -iE "flutter.*(error|exception)|webrtc.*(error|fail)" <<<"$LOGCAT" | tail -n 20 || true
-
-PKG_LINE=$(adb shell pm list packages -U "$PKG" | tr -d '\r')
-UID_=$(sed -n 's/.*uid:\([0-9][0-9]*\).*/\1/p' <<<"$PKG_LINE" | sed -n 1p)
-echo "--- $PKG uid: ${UID_:-<unknown>}"
 
 AUDIO=$(tr -d '\r' < "$OUT/dumpsys-audio.txt")
 PLAYERS=$(grep -E "AudioPlaybackConfiguration.*u/pid:${UID_:-none}/" <<<"$AUDIO" || true)
