@@ -3,101 +3,119 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
+import '../../utils/user_activation.dart';
+import '../audio/audio_engine.dart';
+import '../audio/bytes_uri.dart';
 import '../audio/remote_audio_sink.dart';
-import '../observability/reporting.dart';
+import '../network/file_transfer.dart';
 import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
 import '../network/models/track_info.dart';
+import '../network/pipe_control_link.dart';
 import '../network/signaling/signaling_channel.dart';
+import '../network/webrtc/data_channels.dart';
 import '../network/webrtc/ice_servers.dart';
-import '../network/webrtc/opus_sdp.dart';
-import '../network/webrtc/playout_latency.dart';
+import '../observability/reporting.dart';
 import 'active_session.dart';
+import 'listener_session_controller.dart';
 
 /// How long a peer connection may sit in the transient `disconnected` state
 /// (WiFi blip, NAT rebinding) before the host is treated as gone.
 const Duration _disconnectGrace = Duration(seconds: 10);
 
-/// How often a listener measures its playout latency and reports it to the
-/// host, which delays its own speaker to match.
-const Duration _latencyReportInterval = Duration(seconds: 1);
-
-/// Listener-side controller for a **web-hosted** session: the audio source is
-/// a browser running the Ampme web app, which streams its audio to this
-/// device over WebRTC. A [SignalingChannel] — Supabase Realtime by default,
-/// or the LAN relay — carries only the handshake (offer/answer/ICE); the
-/// audio itself flows host -> listener directly, so latency stays low.
+/// Listener-side controller for a **web-hosted** session (a browser running
+/// the Ampme web app).
 ///
-/// This is a live stream: there's no seekable position, no clock sync (the
-/// host's clock is irrelevant — audio arrives in real time), and playback
-/// starts as soon as the remote audio track arrives. It implements
-/// [ActiveSession] so the join UI treats it exactly like a native-hosted
-/// session.
-class WebRtcListenerController extends ChangeNotifier
-    implements ActiveSession {
-  WebRtcListenerController({required this.selfDevice}) {
-    _sink = RemoteAudioSink(onBlocked: _handleAudioBlocked);
+/// The host sends the whole song to this device over a WebRTC data channel
+/// and drives playback with the same protocol phone-hosted sessions use
+/// (clock sync, prepare/ready, play at a scheduled host instant, periodic
+/// position references), over a second data channel. So this is a thin
+/// transport: the actual session logic is a [ListenerSessionController]
+/// whose control link is the data channel and whose tracks resolve to the
+/// received bytes — every device plays its own copy, started at the same
+/// instant, instead of each one trailing a live stream by its own delay.
+///
+/// A [SignalingChannel] (Supabase Realtime, or the LAN relay) only carries the
+/// WebRTC handshake.
+class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
+  WebRtcListenerController({required this.selfDevice, AudioEngine? audioEngine}) {
+    _session = ListenerSessionController(
+      selfDevice: selfDevice,
+      audioEngine: audioEngine,
+      trackResolver: _resolveTrack,
+    )..addListener(_notify);
+    _audioUnlocked = pageHasUserActivation;
   }
 
   final DeviceInfo selfDevice;
 
-  late final RemoteAudioSink _sink;
+  late final ListenerSessionController _session;
+  final FileReceiver _files = FileReceiver();
+  StreamSubscription<double>? _progressSub;
+
+  /// Playable URI per received track (temp file / blob URL), reused when the
+  /// session reloads the same track (e.g. after a reconnect).
+  final Map<String, Uri> _uris = {};
+
   SignalingChannel? _signaling;
   StreamSubscription<Map<String, dynamic>>? _messagesSub;
   StreamSubscription<void>? _droppedSub;
   rtc.RTCPeerConnection? _pc;
-  Timer? _positionTimer;
+  PipeControlLink? _link;
+  StreamController<String>? _controlFrames;
   Timer? _disconnectTimer;
-  Timer? _latencyTimer;
-  PlayoutLatencyMeter _latencyMeter = PlayoutLatencyMeter();
-
-  /// This device's latest measured playout latency (ms), as reported to the
-  /// host. Null until audio is flowing.
-  int? playoutLatencyMs;
-  bool _disposed = false;
   bool _peerConnected = false;
+  bool _disposed = false;
+  bool _audioUnlocked = true;
+  bool _hostGone = false;
+  String? _signaledName;
 
-  /// ICE candidates that arrived before the remote description was set are
-  /// buffered here and flushed right after — the host's candidates can arrive
-  /// while the native peer is still being created, and `addCandidate` before
-  /// `setRemoteDescription` throws (dropping a candidate can strand the
-  /// connection).
+  /// Fraction (0..1) of the current song received so far; null when idle.
+  @override
+  double? trackDownloadProgress;
+
+  /// ICE candidates that arrived before the remote description was set.
   final _pendingCandidates = <rtc.RTCIceCandidate>[];
   bool _remoteDescriptionSet = false;
 
-  // ---- ActiveSession surface ----
+  // ---- ActiveSession surface (delegated to the inner session) ----
   @override
-  String? sessionName;
+  String? get sessionName => _session.sessionName ?? _signaledName;
   @override
-  TrackInfo? currentTrack;
+  TrackInfo? get currentTrack => _session.currentTrack;
   @override
-  PlaybackState playbackState = PlaybackState.stopped;
+  PlaybackState get playbackState => _session.playbackState;
   @override
-  Duration position = Duration.zero;
+  Duration get position => _session.position;
   @override
-  double volume = 1.0;
+  double get volume => _session.volume;
   @override
-  bool hostLeft = false;
+  bool get hostLeft => _hostGone || _session.hostLeft;
   @override
-  bool isReconnecting = false;
+  bool get isReconnecting => _session.isReconnecting;
   @override
-  int? clockOffsetMs;
+  int? get clockOffsetMs => _session.clockOffsetMs;
   @override
-  int? roundTripMs;
+  int? get roundTripMs => _session.roundTripMs;
   @override
-  bool needsAudioUnlock = false;
-
+  bool get isLiveSession => false;
   @override
-  bool get isLiveSession => true;
+  bool get needsAudioUnlock => !_audioUnlocked && !hostLeft;
 
   /// Registers with the session over [signaling]. Resolves once the host
   /// acknowledged us; throws [SignalingException] if the session can't be
   /// found or the signaling service is unreachable.
   Future<void> connect(SignalingChannel signaling) async {
     _signaling = signaling;
+    _progressSub = _files.progress.listen((p) {
+      // The song is in: re-sync the clock on a now-idle link.
+      if (p >= 1 && trackDownloadProgress != null) _link?.resetSync();
+      trackDownloadProgress = p >= 1 ? null : p;
+      _notify();
+    });
     // Listen before connecting: the host's offer can follow its
     // acknowledgement immediately.
-    _messagesSub = signaling.messages.listen(_handleMessage);
+    _messagesSub = signaling.messages.listen(_handleSignal);
     final Map<String, dynamic> welcome;
     try {
       welcome = await signaling.connect();
@@ -105,23 +123,16 @@ class WebRtcListenerController extends ChangeNotifier
       await _teardown();
       rethrow;
     }
-    sessionName = welcome['sessionName'] as String? ?? 'Web session';
-    currentTrack = TrackInfo(
-      trackId: welcome['code'] as String? ?? 'web',
-      fileName: 'Live from web host',
-      streamUrl: '',
-      durationMs: 0,
-      isLive: true,
-    );
+    _signaledName = welcome['sessionName'] as String? ?? 'Web session';
     _droppedSub = signaling.disconnected.listen((_) {
-      // Signaling only matters until the peer is up; once audio flows
-      // directly, losing it is harmless.
+      // Signaling only matters until the peer is up; afterwards everything
+      // flows over the direct connection.
       if (!_peerConnected) _handleHostGone();
     });
     _notify();
   }
 
-  void _handleMessage(Map<String, dynamic> message) {
+  void _handleSignal(Map<String, dynamic> message) {
     switch (message['type']) {
       case 'offer':
         unawaited(_answerOffer(message['sdp'] as String? ?? ''));
@@ -139,6 +150,8 @@ class WebRtcListenerController extends ChangeNotifier
     try {
       // A fresh offer (host re-connecting us) replaces any previous peer.
       await _teardownPeer();
+      // Android: keep the WebRTC stack on the media audio path so it never
+      // switches the phone into call mode under the music player.
       await RemoteAudioSink.prepare();
       final pc = await rtc.createPeerConnection(<String, dynamic>{
         'iceServers': iceServers(),
@@ -155,20 +168,23 @@ class WebRtcListenerController extends ChangeNotifier
           'sdpMLineIndex': candidate.sdpMLineIndex,
         });
       };
-      pc.onTrack = (event) {
-        if (_disposed || event.track.kind != 'audio') return;
-        if (event.streams.isNotEmpty) {
-          unawaited(_sink.attach(event.streams.first, event.track));
+      pc.onDataChannel = (channel) {
+        if (_pc != pc || _disposed) return;
+        switch (channel.label) {
+          case controlChannelLabel:
+            _attachControl(channel);
+          case fileChannelLabel:
+            channel.onMessage = (m) => m.isBinary
+                ? _files.handleBinary(m.binary)
+                : _files.handleText(m.text);
         }
-        playbackState = PlaybackState.playing;
-        _startPositionTimer();
-        _notify();
       };
-      pc.onConnectionState = _handleConnectionState;
+      pc.onConnectionState = (state) {
+        if (_pc == pc) _handleConnectionState(state);
+      };
 
       await pc.setRemoteDescription(rtc.RTCSessionDescription(sdp, 'offer'));
       _remoteDescriptionSet = true;
-      // Flush any candidates that raced ahead of the remote description.
       for (final candidate in _pendingCandidates) {
         try {
           await pc.addCandidate(candidate);
@@ -179,16 +195,39 @@ class WebRtcListenerController extends ChangeNotifier
       _pendingCandidates.clear();
 
       final answer = await pc.createAnswer();
-      // Ask the host for stereo, music-bitrate Opus instead of the mono
-      // voice defaults.
-      final answerSdp = withMusicOpusParams(answer.sdp ?? '');
-      await pc.setLocalDescription(
-        rtc.RTCSessionDescription(answerSdp, answer.type),
-      );
-      _signaling?.send({'type': 'answer', 'to': 'host', 'sdp': answerSdp});
+      await pc.setLocalDescription(answer);
+      _signaling?.send({'type': 'answer', 'to': 'host', 'sdp': answer.sdp});
     } catch (e, st) {
       reportError(e, st, context: 'answerWebRtcOffer');
     }
+  }
+
+  /// Wires the control data channel into a [PipeControlLink] and hands it to
+  /// the inner session. Frames are buffered from the first moment so the
+  /// host's welcome can't be missed.
+  void _attachControl(rtc.RTCDataChannel channel) {
+    final frames = StreamController<String>();
+    _controlFrames = frames;
+    channel.onMessage = (m) {
+      if (!m.isBinary && !frames.isClosed) frames.add(m.text);
+    };
+    final link = PipeControlLink(
+      deviceId: selfDevice.deviceId,
+      incoming: frames.stream,
+      sendFrame: (frame) {
+        if (channel.state != rtc.RTCDataChannelState.RTCDataChannelOpen) return;
+        unawaited(
+          channel.send(rtc.RTCDataChannelMessage(frame)).catchError((Object _) {}),
+        );
+      },
+    );
+    channel.onDataChannelState = (state) {
+      if (state == rtc.RTCDataChannelState.RTCDataChannelOpen) {
+        link.syncNow(); // requests sent before "open" were dropped
+      }
+    };
+    _link = link;
+    _session.attach(link);
   }
 
   void _handleConnectionState(rtc.RTCPeerConnectionState state) {
@@ -197,15 +236,10 @@ class WebRtcListenerController extends ChangeNotifier
         _peerConnected = true;
         _disconnectTimer?.cancel();
         _disconnectTimer = null;
-        _startLatencyReports();
-        if (isReconnecting) {
-          isReconnecting = false;
-          _notify();
-        }
+        _link?.setReconnecting(false);
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
         // Often transient; ICE recovers on its own within a few seconds.
-        isReconnecting = true;
-        _notify();
+        _link?.setReconnecting(true);
         _disconnectTimer ??= Timer(_disconnectGrace, _handleHostGone);
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed:
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateClosed:
@@ -223,7 +257,6 @@ class WebRtcListenerController extends ChangeNotifier
     );
     final pc = _pc;
     if (pc == null || !_remoteDescriptionSet) {
-      // The peer isn't ready for candidates yet — hold them until it is.
       _pendingCandidates.add(candidate);
       return;
     }
@@ -234,69 +267,47 @@ class WebRtcListenerController extends ChangeNotifier
     }
   }
 
-  /// Measures how far this device's audio trails the host (WebRTC stats) and
-  /// tells the host, so the host can delay its own speaker to match.
-  void _startLatencyReports() {
-    _latencyTimer?.cancel();
-    _latencyMeter = PlayoutLatencyMeter();
-    _latencyTimer = Timer.periodic(_latencyReportInterval, (_) async {
-      final pc = _pc;
-      if (pc == null || _disposed) return;
-      try {
-        final reports = await pc.getStats();
-        final latency = _latencyMeter.update(
-          reports.map((r) => (type: r.type, values: r.values)),
-        );
-        if (latency == null) return;
-        playoutLatencyMs = latency;
-        _signaling?.send({'type': 'stats', 'to': 'host', 'latencyMs': latency});
-      } catch (_) {
-        // Stats are best-effort; the host falls back to its default delay.
-      }
-    });
-  }
-
-  void _handleAudioBlocked() {
-    needsAudioUnlock = true;
-    _notify();
+  /// [TrackResolver] for the inner session: waits for the song's bytes to
+  /// arrive over the file channel and makes them playable locally.
+  Future<Uri?> _resolveTrack(TrackInfo track) async {
+    final cached = _uris[track.trackId];
+    if (cached != null) return cached;
+    final file = await _files.waitFor(track.trackId);
+    if (_disposed) return null;
+    final uri = await bytesToUri(file.bytes, name: track.fileName, mime: file.mime);
+    // One song at a time: free the previous one.
+    for (final old in _uris.values) {
+      releaseBytesUri(old);
+    }
+    _uris
+      ..clear()
+      ..[track.trackId] = uri;
+    return uri;
   }
 
   /// Starts audio the browser refused to autoplay. Must be called from a
-  /// user gesture (tap) handler.
+  /// user gesture (tap) handler; the next position reference re-aligns it.
   @override
   Future<void> unlockAudio() async {
-    await _sink.resume();
-    needsAudioUnlock = _sink.isBlocked;
+    _audioUnlocked = true;
     _notify();
-  }
-
-  void _handleHostGone() {
-    if (hostLeft || _disposed) return;
-    hostLeft = true;
-    isReconnecting = false;
-    playbackState = PlaybackState.stopped;
-    _positionTimer?.cancel();
-    _positionTimer = null;
-    _disconnectTimer?.cancel();
-    _disconnectTimer = null;
-    unawaited(_teardownPeer());
-    unawaited(_sink.dispose());
-    _notify();
-  }
-
-  void _startPositionTimer() {
-    _positionTimer?.cancel();
-    final startedAt = DateTime.now();
-    _positionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      position = DateTime.now().difference(startedAt);
-      _notify();
-    });
+    if (_session.hostIsPlaying) {
+      await _session.audioEngine.play();
+    }
   }
 
   @override
-  Future<void> setLocalVolume(double value) async {
-    volume = value;
-    await _sink.setVolume(value);
+  Future<void> setLocalVolume(double value) => _session.setLocalVolume(value);
+
+  void _handleHostGone() {
+    if (_hostGone || _disposed) return;
+    _hostGone = true;
+    _disconnectTimer?.cancel();
+    _disconnectTimer = null;
+    // Lets the inner session stop its audio and report the host as gone.
+    _link?.close();
+    unawaited(_session.audioEngine.pause().catchError((Object _) {}));
+    unawaited(_teardownPeer());
     _notify();
   }
 
@@ -305,12 +316,12 @@ class WebRtcListenerController extends ChangeNotifier
   }
 
   Future<void> _teardownPeer() async {
-    _latencyTimer?.cancel();
-    _latencyTimer = null;
     final pc = _pc;
     _pc = null;
     _remoteDescriptionSet = false;
     _peerConnected = false;
+    await _controlFrames?.close();
+    _controlFrames = null;
     if (pc != null) {
       try {
         await pc.close();
@@ -321,12 +332,10 @@ class WebRtcListenerController extends ChangeNotifier
   }
 
   Future<void> _teardown() async {
-    _positionTimer?.cancel();
-    _positionTimer = null;
     _disconnectTimer?.cancel();
     _disconnectTimer = null;
     await _teardownPeer();
-    await _sink.dispose();
+    await _progressSub?.cancel();
     await _messagesSub?.cancel();
     _messagesSub = null;
     await _droppedSub?.cancel();
@@ -339,6 +348,14 @@ class WebRtcListenerController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    _session.removeListener(_notify);
+    // Disposes the audio engine and the control link.
+    _session.dispose();
+    _files.dispose();
+    for (final uri in _uris.values) {
+      releaseBytesUri(uri);
+    }
+    _uris.clear();
     unawaited(_teardown());
     super.dispose();
   }

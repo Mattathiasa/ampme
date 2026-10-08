@@ -4,39 +4,45 @@ import 'dart:js_interop';
 import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 
+import '../../core/network/file_transfer.dart';
+import '../../core/network/models/control_message.dart';
 import '../../core/network/models/playback_state.dart';
 import '../../core/network/models/track_info.dart';
 import '../../core/network/signaling/signaling_channel.dart';
+import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
-import '../../core/network/webrtc/playout_latency.dart';
 import '../../core/observability/reporting.dart';
+import '../../utils/id_generator.dart';
+import 'sync_math.dart';
 
-/// Largest delay the host's own speaker can be set to (ms). A WebRTC listener
-/// typically trails the source by 100-400 ms (encode + network + jitter buffer
-/// + the phone's audio output latency); 2 s leaves room for bad networks.
-const int maxSyncDelayMs = 2000;
+/// Range of the host's own speaker offset (ms). Positive delays this
+/// browser's speaker relative to the phones (use it if the host still sounds
+/// ahead, e.g. because a phone is on Bluetooth).
+const int minSpeakerOffsetMs = -300;
+const int maxSpeakerOffsetMs = 500;
 
-/// Delay used for the host's speaker until a listener reports its measured
-/// latency (e.g. it runs an older app that doesn't report).
-const int defaultSyncDelayMs = 250;
+const String _speakerOffsetStorageKey = 'ampme.speakerOffsetMs';
 
-/// Range of the manual fine-tune added on top of the measured latency — for
-/// what WebRTC stats can't see (the phone's audio-output buffer, Bluetooth).
-const int minSyncTrimMs = -500;
-const int maxSyncTrimMs = 1000;
-
-/// Measured-latency changes smaller than this aren't applied, so the host's
-/// speaker doesn't keep shifting (each shift is a tiny pitch bend).
-const int _syncDelayDeadbandMs = 15;
-
-const String _trimStorageKey = 'ampme.syncTrimMs';
+/// The sender id this host uses in control messages.
+const String _hostId = 'host';
 
 /// How long a listener's peer connection may sit in the transient
 /// `disconnected` state before it's dropped from the session.
 const Duration _disconnectGrace = Duration(seconds: 10);
 
+/// How long a play/seek waits for listeners to confirm they're buffered.
+const Duration _readyAckTimeout = Duration(milliseconds: 1500);
+
+/// A listener that opened the control channel but never spoke the protocol
+/// within this long runs an older app version (it expects a live stream).
+const Duration _protocolTimeout = Duration(seconds: 6);
+
+/// Keep at most this much song data queued per listener, so control
+/// messages (clock sync!) never sit behind megabytes of file data.
+const int _maxBufferedFileBytes = 256 * 1024;
+
 /// Minimal typed views over the JS `RTCIceCandidateEvent` / `RTCIceCandidate`
-/// objects, which package:web doesn't declare.
+/// / `RTCDataChannelEvent` objects, which package:web doesn't declare.
 extension type _RtcIceEvent._(JSObject _) implements JSObject {
   external JSObject? get candidate;
 }
@@ -47,18 +53,62 @@ extension type _RtcIceCandidate._(JSObject _) implements JSObject {
   external int? get sdpMLineIndex;
 }
 
-/// Browser-side host for a web-hosted session. The browser can't run the
-/// HTTP/WebSocket servers a native host runs, so instead it:
+/// What the host screen shows for each connected device.
+enum ListenerPhase { connecting, receivingSong, ready, needsUpdate }
+
+class WebListener {
+  WebListener(this.id, this.name);
+
+  final String id;
+  String name;
+  ListenerPhase phase = ListenerPhase.connecting;
+
+  /// Fraction of the current song sent to this device.
+  double fileProgress = 0;
+
+  /// Smoothed distance between this device's playhead and the host's (ms,
+  /// positive = ahead). Null until it reports while playing.
+  int? driftMs;
+
+  /// The device's measured clock-sync round trip (ms).
+  int? roundTripMs;
+}
+
+/// Per-listener WebRTC state.
+class _Peer {
+  _Peer(this.pc);
+
+  final web.RTCPeerConnection pc;
+  web.RTCDataChannel? control;
+  web.RTCDataChannel? file;
+  bool remoteSet = false;
+  final List<Map<String, dynamic>> pendingIce = [];
+  Timer? disconnectTimer;
+  Timer? protocolTimer;
+  bool spokeProtocol = false;
+
+  /// Track whose bytes were fully queued to this listener / are being sent.
+  String? sentTrackId;
+  String? sendingTrackId;
+}
+
+/// Browser-side host for a web-hosted session.
 ///
-/// 1. Decodes a local audio file with WebAudio and plays it locally,
-/// 2. Routes the same audio through a `MediaStreamDestination`, and
-/// 3. Streams that track to every joined listener over WebRTC, exchanging
-///    the handshake over a [SignalingChannel] — Supabase Realtime (works
-///    from any page, the default) or the LAN relay (`tool/web_relay.dart`).
+/// Every device plays **its own copy** of the song, started at the same
+/// instant — the same scheme phone-hosted sessions use, so a browser host,
+/// Android app listeners and browser listeners stay in step with each other:
 ///
-/// WebRTC keeps listener latency to roughly 30-80ms on a LAN (Opus 20ms +
-/// NetEQ jitter buffer), which is the closest browsers can get to the
-/// native file-streaming path. Sessions are live: no seeking on listeners.
+/// 1. The song file is sent to each listener over a WebRTC data channel.
+/// 2. A second data channel carries the sync protocol ([ControlMessage]):
+///    NTP-style clock sync, `prepare`/`ready`, `play`/`seek` at a scheduled
+///    host wall-clock instant, and a position reference every second that
+///    listeners use to correct drift.
+/// 3. The host's own speaker plays the song through WebAudio, started at
+///    that same instant.
+///
+/// A [SignalingChannel] — Supabase Realtime (works from any page, the
+/// default) or the LAN relay (`tool/web_relay.dart`) — only carries the
+/// WebRTC handshake.
 class WebHostController extends ChangeNotifier {
   WebHostController();
 
@@ -78,31 +128,16 @@ class WebHostController extends ChangeNotifier {
   /// connected keep playing (WebRTC is direct), new ones can't join.
   bool signalingLost = false;
 
-  /// Manual fine-tune (ms) added to the measured latency. Remembered in this
-  /// browser across sessions.
-  int syncTrimMs = _loadTrim();
+  /// Shifts this browser's own speaker relative to the shared timeline (ms).
+  /// Remembered in this browser across sessions.
+  int speakerOffsetMs = _loadSpeakerOffset();
 
-  /// Each listener's smoothed playout latency (ms), as it reports it.
-  final Map<String, int> _latencies = {};
-
-  /// How far the slowest listener's audio trails the stream, measured by the
-  /// listeners themselves (network + jitter buffer). Null until one reports.
-  int? get measuredLatencyMs =>
-      _latencies.isEmpty ? null : _latencies.values.reduce((a, b) => a > b ? a : b);
-
-  /// How long the host's *own speaker* is delayed behind the stream sent to
-  /// listeners, so the host plays at the same moment they do. Only while
-  /// listeners are connected (alone, there's nothing to match).
-  int get effectiveSyncDelayMs => _listeners.isEmpty
-      ? 0
-      : ((measuredLatencyMs ?? defaultSyncDelayMs) + syncTrimMs).clamp(0, maxSyncDelayMs);
-
-  int _appliedSyncDelayMs = 0;
-
-  static int _loadTrim() {
+  static int _loadSpeakerOffset() {
     try {
-      final v = int.tryParse(web.window.localStorage.getItem(_trimStorageKey) ?? '');
-      return (v ?? 0).clamp(minSyncTrimMs, maxSyncTrimMs);
+      final v = int.tryParse(
+        web.window.localStorage.getItem(_speakerOffsetStorageKey) ?? '',
+      );
+      return (v ?? 0).clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs);
     } catch (_) {
       return 0; // storage blocked (private mode etc.)
     }
@@ -113,22 +148,33 @@ class WebHostController extends ChangeNotifier {
   PlaybackState playbackState = PlaybackState.stopped;
   Duration position = Duration.zero;
   double volume = 1.0;
+  Uint8List? _fileBytes;
+  String? _fileMime;
 
-  // ---- Connected listeners (id -> name) ----
-  final Map<String, String> _listeners = {};
-  List<String> get listenerNames => _listeners.values.toList(growable: false);
+  // ---- Connected listeners ----
+  final Map<String, WebListener> _listeners = {};
+  List<WebListener> get listeners => _listeners.values.toList(growable: false);
   int get listenerCount => _listeners.length;
 
-  // ---- WebAudio graph ----
+  // ---- WebAudio ----
   web.AudioContext? _ctx;
   web.AudioBuffer? _buffer;
   web.AudioBufferSourceNode? _source;
-  web.MediaStreamAudioDestinationNode? _destination;
   web.GainNode? _gain;
-  web.DelayNode? _delay;
-  double _startCtxTime = 0;
-  double _startOffsetMs = 0;
+
+  /// The running source plays song position [_anchorOffsetMs] at context
+  /// time [_anchorCtxTime] (seconds), shifted by [_anchorSpeakerOffsetMs].
+  double _anchorCtxTime = 0;
+  double _anchorOffsetMs = 0;
+  int _anchorSpeakerOffsetMs = 0;
   Timer? _positionTimer;
+  Timer? _referenceTimer;
+
+  /// Serializes play/seek handshakes so their prepare/ready windows and
+  /// scheduled instants never interleave.
+  Future<void>? _inFlightStart;
+  final Set<String> _readyAcks = {};
+  bool _awaitingReadyAcks = false;
 
   // ---- Signaling ----
   SignalingChannel? _signaling;
@@ -137,14 +183,7 @@ class WebHostController extends ChangeNotifier {
   JSFunction? _pageHideListener;
 
   // ---- WebRTC peers (listenerId -> connection) ----
-  final Map<String, web.RTCPeerConnection> _pcs = {};
-  final Map<String, Timer> _disconnectTimers = {};
-
-  /// Listener ids whose remote description has been applied — until then,
-  /// their ICE candidates are buffered ([_pendingIce]) because
-  /// `addIceCandidate` before `setRemoteDescription` throws.
-  final Set<String> _remoteSet = {};
-  final Map<String, List<Map<String, dynamic>>> _pendingIce = {};
+  final Map<String, _Peer> _peers = {};
 
   String? errorMessage;
   bool _disposed = false;
@@ -165,7 +204,7 @@ class WebHostController extends ChangeNotifier {
     errorMessage = null;
     signalingLost = false;
     _signaling = signaling;
-    _messagesSub = signaling.messages.listen(_handleMessage);
+    _messagesSub = signaling.messages.listen(_handleSignal);
     _droppedSub = signaling.disconnected.listen((_) {
       if (!isRunning) return;
       signalingLost = true;
@@ -185,43 +224,42 @@ class WebHostController extends ChangeNotifier {
     _notify();
   }
 
-  /// Decodes [bytes] (an audio file the user picked) and makes it the
-  /// session's track. Any track already playing is stopped.
+  // ---- Track loading ----
+
+  /// Decodes [bytes] (an audio file the user picked), makes it the session's
+  /// track and starts copying it to every listener. Any track already
+  /// playing is stopped.
   Future<void> loadTrack(Uint8List bytes, String fileName) async {
     errorMessage = null;
     try {
       final ctx = _ctx ??= web.AudioContext();
-      // Copy to a clean buffer so the ArrayBuffer handed to the decoder is
-      // exactly the file bytes (file_picker views may be offset/sliced).
+      // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
+      // and the original bytes still have to be sent to listeners.
       final copy = Uint8List.fromList(bytes);
       final buffer = await ctx.decodeAudioData(copy.buffer.toJS).toDart;
       _stopSource();
+      _stopReferenceTimer();
       _buffer = buffer;
-      _destination ??= ctx.createMediaStreamDestination();
-      // Host speaker path: source -> gain -> delay -> speakers. The stream to
-      // listeners taps the source *before* this, so the delay only shifts
-      // what the host hears.
-      _delay ??= ctx.createDelay(maxSyncDelayMs / 1000.0)
-        ..delayTime.value = (_appliedSyncDelayMs = effectiveSyncDelayMs) / 1000.0
-        ..connect(ctx.destination);
       _gain ??= ctx.createGain()
         ..gain.value = volume
-        ..connect(_delay!);
-      // Listeners may have joined before a track was loaded (the join code is
-      // shown before the song is picked); they were recorded but never offered
-      // a connection because there was no media stream yet. Connect them now.
-      for (final id in _listeners.keys) {
-        if (!_pcs.containsKey(id)) unawaited(_connectPeer(id));
-      }
-      currentTrack = TrackInfo(
-        trackId: sessionCode,
+        ..connect(ctx.destination);
+      _fileBytes = Uint8List.fromList(bytes);
+      _fileMime = audioMimeFor(fileName);
+      final track = TrackInfo(
+        trackId: generateId(),
         fileName: fileName,
         streamUrl: '',
         durationMs: (buffer.duration * 1000).round(),
-        isLive: true,
       );
+      currentTrack = track;
       position = Duration.zero;
       playbackState = PlaybackState.stopped;
+      for (final entry in _peers.entries) {
+        if (_isOpen(entry.value.control)) {
+          _send(entry.key, ControlMessage.trackChanged(senderId: _hostId, track: track));
+        }
+        unawaited(_sendFile(entry.key));
+      }
       _notify();
     } catch (e, st) {
       errorMessage = 'Could not decode that audio file: $e';
@@ -230,19 +268,20 @@ class WebHostController extends ChangeNotifier {
     }
   }
 
+  // ---- Transport ----
+
   Future<void> play() async {
     final ctx = _ctx;
+    final track = currentTrack;
     final buffer = _buffer;
-    if (ctx == null || buffer == null) return;
+    if (ctx == null || track == null || buffer == null) return;
     try {
-      if (ctx.state == 'suspended') {
+      // Resume inside the tap (browsers only allow audio after a gesture).
+      if (ctx.state != 'running') {
         await ctx.resume().toDart;
       }
-      // Finished? Start over instead of "playing" from the very end.
-      final atEnd = position.inMilliseconds >= (buffer.duration * 1000).round();
-      _startSource(atEnd ? Duration.zero : position);
-      playbackState = PlaybackState.playing;
-      _notify();
+      final atEnd = position.inMilliseconds >= track.durationMs - 50;
+      await _synchronizedStart(atEnd ? Duration.zero : position, asSeek: false);
     } catch (e, st) {
       errorMessage = 'Playback failed: $e';
       reportError(e, st, context: 'webHost.play');
@@ -251,25 +290,37 @@ class WebHostController extends ChangeNotifier {
   }
 
   Future<void> pause() async {
-    final ctx = _ctx;
-    if (ctx == null) return;
-    try {
-      if (ctx.state == 'running') {
-        await ctx.suspend().toDart;
-      }
-      playbackState = PlaybackState.paused;
-      _notify();
-    } catch (e, st) {
-      reportError(e, st, context: 'webHost.pause');
+    final track = currentTrack;
+    if (track == null) return;
+    if (playbackState == PlaybackState.playing) {
+      position = Duration(milliseconds: _timelinePositionAt(_nowMs()));
     }
+    _stopSource();
+    _stopReferenceTimer();
+    playbackState = PlaybackState.paused;
+    _broadcast(
+      ControlMessage.pause(
+        senderId: _hostId,
+        trackId: track.trackId,
+        positionMs: position.inMilliseconds,
+        hostTimeMs: _nowMs(),
+      ),
+    );
+    _notify();
   }
 
   Future<void> seek(Duration target) async {
-    position = target;
+    final track = currentTrack;
+    if (track == null) return;
+    final clamped = Duration(
+      milliseconds: target.inMilliseconds.clamp(0, track.durationMs),
+    );
+    position = clamped;
     if (playbackState == PlaybackState.playing) {
-      _startSource(target);
+      await _synchronizedStart(clamped, asSeek: true);
+    } else {
+      _notify();
     }
-    _notify();
   }
 
   Future<void> setVolume(double value) async {
@@ -278,70 +329,156 @@ class WebHostController extends ChangeNotifier {
     _notify();
   }
 
-  /// Sets the manual fine-tune on top of the measured delay, live (no
-  /// restart): raise it if this speaker still sounds ahead of the phones.
-  Future<void> setSyncTrim(int ms) async {
-    syncTrimMs = ms.clamp(minSyncTrimMs, maxSyncTrimMs);
+  /// Moves this browser's speaker relative to the phones, live.
+  Future<void> setSpeakerOffset(int ms) async {
+    speakerOffsetMs = ms.clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs);
     try {
-      web.window.localStorage.setItem(_trimStorageKey, '$syncTrimMs');
+      web.window.localStorage.setItem(_speakerOffsetStorageKey, '$speakerOffsetMs');
     } catch (_) {}
-    _applySyncDelay(force: true);
+    if (playbackState == PlaybackState.playing && _source != null) {
+      // Re-start the local source on the same timeline with the new offset.
+      final at = _nowMs() + 60;
+      _startSourceAt(at, Duration(milliseconds: _timelinePositionAt(at)));
+    }
     _notify();
   }
 
-  /// Moves the speaker delay to [effectiveSyncDelayMs]. Automatic updates
-  /// (listener reports) glide slowly and skip tiny changes; user changes
-  /// ([force]) apply quickly.
-  void _applySyncDelay({bool force = false}) {
-    final delay = _delay;
-    final ctx = _ctx;
-    if (delay == null || ctx == null) return;
-    final target = effectiveSyncDelayMs;
-    final change = (target - _appliedSyncDelayMs).abs();
-    if (!force && change < _syncDelayDeadbandMs) return;
-    _appliedSyncDelayMs = target;
-    delay.delayTime.setTargetAtTime(target / 1000.0, ctx.currentTime, force ? 0.05 : 0.5);
+  /// Asks every listener to pre-buffer at [startPosition], waits (bounded)
+  /// for them to confirm, then picks a start instant far enough ahead for
+  /// the command to reach everyone and starts all devices — this browser's
+  /// speaker included — at that instant.
+  Future<void> _synchronizedStart(Duration startPosition, {required bool asSeek}) async {
+    while (_inFlightStart != null) {
+      await _inFlightStart;
+    }
+    final run = _doSynchronizedStart(startPosition, asSeek: asSeek);
+    _inFlightStart = run;
+    try {
+      await run;
+    } finally {
+      if (identical(_inFlightStart, run)) _inFlightStart = null;
+    }
   }
 
-  void _handleLatencyReport(String from, Object? latency) {
-    if (!_listeners.containsKey(from)) return;
-    final ms = latency is num ? latency.round() : int.tryParse('$latency');
-    if (ms == null || ms < 0 || ms > maxSyncDelayMs) return;
-    final before = measuredLatencyMs;
-    _latencies[from] = smoothLatency(_latencies[from], ms);
-    _applySyncDelay(force: before == null); // first measurement: jump to it
-    if (measuredLatencyMs != before) _notify();
+  Future<void> _doSynchronizedStart(Duration startPosition, {required bool asSeek}) async {
+    final track = currentTrack;
+    if (track == null) return;
+    // Silence the old playhead right away (a seek shouldn't keep playing
+    // the old spot during the handshake).
+    _stopSource();
+    _stopReferenceTimer();
+    playbackState = PlaybackState.playing;
+    position = startPosition;
+    _notify();
+
+    // Only devices that already hold this song can confirm; the others
+    // catch up (seek into place) as soon as their copy arrives.
+    final waitingFor = [
+      for (final entry in _peers.entries)
+        if (_isOpen(entry.value.control) && entry.value.sentTrackId == track.trackId)
+          entry.key,
+    ];
+    if (waitingFor.isNotEmpty) {
+      _readyAcks.clear();
+      _awaitingReadyAcks = true;
+      try {
+        _broadcast(
+          ControlMessage.prepare(
+            senderId: _hostId,
+            trackId: track.trackId,
+            positionMs: startPosition.inMilliseconds,
+          ),
+        );
+        final deadline = DateTime.now().add(_readyAckTimeout);
+        while (DateTime.now().isBefore(deadline)) {
+          final pending = waitingFor.where(
+            (id) => !_readyAcks.contains(id) && _peers.containsKey(id),
+          );
+          if (pending.isEmpty) break;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      } finally {
+        _awaitingReadyAcks = false;
+      }
+    }
+    // The user may have paused or changed the song during the handshake.
+    if (currentTrack != track || playbackState != PlaybackState.playing) return;
+
+    final lead = startLeadMs(
+      _listeners.values.map((l) => l.roundTripMs).whereType<int>(),
+    );
+    final startAt = _nowMs() + lead;
+    _startSourceAt(startAt, startPosition);
+    final message = asSeek
+        ? ControlMessage.seek(
+            senderId: _hostId,
+            trackId: track.trackId,
+            positionMs: startPosition.inMilliseconds,
+            startAtHostTimeMs: startAt,
+          )
+        : ControlMessage.play(
+            senderId: _hostId,
+            trackId: track.trackId,
+            positionMs: startPosition.inMilliseconds,
+            startAtHostTimeMs: startAt,
+          );
+    _broadcast(message);
+    _startReferenceTimer();
+    _notify();
   }
 
-  /// Starts a fresh [web.AudioBufferSourceNode] at [offset]. The host's
-  /// speaker delay is applied downstream by [_delay], not here.
-  void _startSource(Duration offset) {
+  static int _nowMs() => DateTime.now().millisecondsSinceEpoch;
+
+  /// Starts this browser's speaker so that song position [offset] plays at
+  /// host wall time [atWallMs] (plus [speakerOffsetMs]).
+  void _startSourceAt(int atWallMs, Duration offset) {
     final ctx = _ctx;
     final buffer = _buffer;
-    final destination = _destination;
-    if (ctx == null || buffer == null || destination == null) return;
-
+    final gain = _gain;
+    if (ctx == null || buffer == null || gain == null) return;
     _stopSource();
 
     final source = ctx.createBufferSource()
       ..buffer = buffer
-      ..connect(destination)
-      ..connect(_gain ?? _delay ?? ctx.destination);
+      ..connect(gain);
     source.onended = ((web.Event _) {
-      if (_source == source) {
-        _source = null;
-        _positionTimer?.cancel();
-        playbackState = PlaybackState.stopped;
-        position = Duration(milliseconds: (buffer.duration * 1000).round());
-        _notify();
-      }
+      if (_source != source) return;
+      _source = null;
+      _positionTimer?.cancel();
+      _stopReferenceTimer();
+      playbackState = PlaybackState.stopped;
+      position = Duration(milliseconds: (buffer.duration * 1000).round());
+      _notify();
     }).toJS;
 
-    _startCtxTime = ctx.currentTime;
-    _startOffsetMs = offset.inMilliseconds.toDouble();
-    source.start(_startCtxTime, offset.inMilliseconds / 1000.0);
+    // Wall time -> context time, sampled together so the mapping is fresh.
+    final ctxNow = ctx.currentTime;
+    final wallNow = _nowMs();
+    var when = ctxNow + (atWallMs - wallNow + speakerOffsetMs) / 1000.0;
+    var offsetSec = offset.inMilliseconds / 1000.0;
+    if (when < ctxNow) {
+      // Already late: start now, further into the song.
+      offsetSec += ctxNow - when;
+      when = ctxNow;
+    }
+    _anchorCtxTime = when;
+    _anchorOffsetMs = offsetSec * 1000;
+    _anchorSpeakerOffsetMs = speakerOffsetMs;
+    if (offsetSec >= buffer.duration) return;
+    source.start(when, offsetSec);
     _source = source;
     _startPositionTimer();
+  }
+
+  /// Where the shared timeline (what listeners should be playing) is at host
+  /// wall time [wallMs], derived from this browser's audio clock.
+  int _timelinePositionAt(int wallMs) {
+    final ctx = _ctx;
+    if (ctx == null || _source == null) return position.inMilliseconds;
+    final ctxAt = ctx.currentTime + (wallMs - _nowMs()) / 1000.0;
+    final rendered = _anchorOffsetMs + (ctxAt - _anchorCtxTime) * 1000;
+    final timeline = rendered + _anchorSpeakerOffsetMs;
+    return timeline < 0 ? 0 : timeline.round();
   }
 
   /// Stops the current source node (if any) without firing its end handler.
@@ -361,32 +498,225 @@ class WebHostController extends ChangeNotifier {
 
   void _startPositionTimer() {
     _positionTimer?.cancel();
-    final ctx = _ctx;
-    if (ctx == null) return;
     _positionTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      final source = _source;
-      if (source == null) return;
-      final elapsedMs =
-          (ctx.currentTime - _startCtxTime) * 1000 + _startOffsetMs;
-      final next = Duration(milliseconds: elapsedMs.round());
+      if (_source == null) return;
+      final next = Duration(milliseconds: _timelinePositionAt(_nowMs()));
       final changed = next.inSeconds != position.inSeconds;
       position = next;
       if (changed) _notify();
     });
   }
 
-  // ---- Signaling protocol ----
+  /// Every second, sends listeners where the timeline is right now; each one
+  /// re-anchors if it has drifted (see ListenerSessionController).
+  void _startReferenceTimer() {
+    _referenceTimer?.cancel();
+    _referenceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final track = currentTrack;
+      if (track == null || _source == null) return;
+      final now = _nowMs();
+      _broadcast(
+        ControlMessage.positionSync(
+          senderId: _hostId,
+          trackId: track.trackId,
+          positionMs: _timelinePositionAt(now),
+          hostTimeMs: now,
+        ),
+      );
+    });
+  }
 
-  void _handleMessage(Map<String, dynamic> message) {
+  void _stopReferenceTimer() {
+    _referenceTimer?.cancel();
+    _referenceTimer = null;
+  }
+
+  // ---- Control protocol (per listener, over the control data channel) ----
+
+  void _handleControlFrame(String id, String frame) {
+    final ControlMessage message;
+    try {
+      message = ControlMessage.decode(frame);
+    } catch (_) {
+      return;
+    }
+    final peer = _peers[id];
+    final listener = _listeners[id];
+    if (peer == null || listener == null) return;
+    if (!peer.spokeProtocol) {
+      peer.spokeProtocol = true;
+      peer.protocolTimer?.cancel();
+      if (listener.phase == ListenerPhase.needsUpdate) {
+        listener.phase = ListenerPhase.connecting;
+        _notify();
+      }
+    }
+    switch (message.type) {
+      case ControlMessageType.clockSyncRequest:
+        _send(
+          id,
+          ControlMessage.clockSyncResponse(
+            senderId: _hostId,
+            clientSendTimeMs: message.payload['clientSendTimeMs'] as int,
+            hostTimeMs: _nowMs(),
+          ),
+        );
+      case ControlMessageType.ready:
+        if (_awaitingReadyAcks) _readyAcks.add(id);
+      case ControlMessageType.listenerStatusUpdate:
+        _handleStatus(listener, message.payload);
+      default:
+        break;
+    }
+  }
+
+  void _handleStatus(WebListener listener, Map<String, dynamic> payload) {
+    final rtt = payload['roundTripMs'] as int?;
+    if (rtt != null && rtt > 0) listener.roundTripMs = rtt;
+    final listenerPlaying = payload['playbackState'] == 'playing';
+    final positionMs = payload['positionMs'] as int?;
+    if (playbackState != PlaybackState.playing ||
+        _source == null ||
+        !listenerPlaying ||
+        positionMs == null) {
+      if (listener.driftMs != null) {
+        listener.driftMs = null;
+        _notify();
+      }
+      return;
+    }
+    final drift = listenerDriftMs(
+      listenerPositionMs: positionMs,
+      roundTripMs: listener.roundTripMs ?? 0,
+      receivedAtMs: _nowMs(),
+      hostPositionAt: _timelinePositionAt,
+    );
+    final previous = listener.driftMs;
+    // Light smoothing: the reported position is interpolated and jittery.
+    listener.driftMs = previous == null || (drift - previous).abs() > 250
+        ? drift
+        : (previous * 0.5 + drift * 0.5).round();
+    _notify();
+  }
+
+  void _handleControlOpen(String id) {
+    final peer = _peers[id];
+    if (peer == null) return;
+    final track = currentTrack;
+    final now = _nowMs();
+    final playing = playbackState == PlaybackState.playing && _source != null;
+    _send(
+      id,
+      ControlMessage.welcome(
+        senderId: _hostId,
+        sessionId: sessionCode,
+        sessionName: sessionName,
+        hostDeviceId: _hostId,
+        currentTrack: track,
+        playbackState: playing ? 'playing' : playbackState.toJsonValue(),
+        positionMs: playing ? _timelinePositionAt(now) : position.inMilliseconds,
+        hostTimeMs: now,
+      ),
+    );
+    peer.protocolTimer = Timer(_protocolTimeout, () {
+      final listener = _listeners[id];
+      if (peer.spokeProtocol || listener == null) return;
+      listener.phase = ListenerPhase.needsUpdate;
+      _notify();
+    });
+  }
+
+  /// Copies the current song to listener [id] over its file channel, keeping
+  /// only a small amount queued at a time.
+  Future<void> _sendFile(String id) async {
+    final peer = _peers[id];
+    final channel = peer?.file;
+    final track = currentTrack;
+    final bytes = _fileBytes;
+    if (peer == null || channel == null || track == null || bytes == null) return;
+    if (!_isOpen(channel)) return; // sent once the channel opens
+    if (peer.sentTrackId == track.trackId || peer.sendingTrackId == track.trackId) {
+      return;
+    }
+    peer.sendingTrackId = track.trackId;
+    final listener = _listeners[id];
+    listener
+      ?..phase = ListenerPhase.receivingSong
+      ..fileProgress = 0;
+    _notify();
+    try {
+      channel.send(
+        FileTransferFrames.start(trackId: track.trackId, size: bytes.length, mime: _fileMime)
+            .toJS,
+      );
+      var sent = 0;
+      var lastNotified = 0.0;
+      for (final chunk in FileTransferFrames.chunks(bytes)) {
+        while (channel.bufferedAmount > _maxBufferedFileBytes) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          if (!_stillSending(peer, track, channel)) return;
+        }
+        if (!_stillSending(peer, track, channel)) return;
+        channel.send(chunk.toJS);
+        sent += chunk.length;
+        final progress = sent / bytes.length;
+        if (listener != null && progress - lastNotified >= 0.02) {
+          listener.fileProgress = progress;
+          lastNotified = progress;
+          _notify();
+        }
+      }
+      channel.send(FileTransferFrames.end(track.trackId).toJS);
+      peer
+        ..sentTrackId = track.trackId
+        ..sendingTrackId = null;
+      listener
+        ?..phase = ListenerPhase.ready
+        ..fileProgress = 1;
+      _notify();
+    } catch (e, st) {
+      peer.sendingTrackId = null;
+      reportError(e, st, context: 'webHost.sendFile');
+    }
+  }
+
+  bool _stillSending(_Peer peer, TrackInfo track, web.RTCDataChannel channel) =>
+      _peers.containsValue(peer) &&
+      currentTrack == track &&
+      peer.sendingTrackId == track.trackId &&
+      _isOpen(channel);
+
+  static bool _isOpen(web.RTCDataChannel? channel) =>
+      channel != null && channel.readyState == 'open';
+
+  void _send(String id, ControlMessage message) {
+    final channel = _peers[id]?.control;
+    if (!_isOpen(channel)) return;
+    try {
+      channel!.send(message.encode().toJS);
+    } catch (_) {
+      // Closing; the connection-state handler cleans up.
+    }
+  }
+
+  void _broadcast(ControlMessage message) {
+    for (final id in _peers.keys.toList()) {
+      _send(id, message);
+    }
+  }
+
+  // ---- Signaling / WebRTC setup ----
+
+  void _handleSignal(Map<String, dynamic> message) {
     switch (message['type']) {
       case 'listener-joined':
         final id = message['id'] as String?;
         if (id == null) return;
-        _listeners[id] = message['deviceName'] as String? ?? 'Unknown device';
-        _applySyncDelay(force: true);
+        _listeners[id] = WebListener(id, message['deviceName'] as String? ?? 'Unknown device');
         _notify();
         // A re-join (same id) replaces the old connection.
-        unawaited(_closePeer(id).then((_) => _connectPeer(id)));
+        _closePeer(id);
+        unawaited(_connectPeer(id));
       case 'listener-left':
         final id = message['id'] as String?;
         if (id == null) return;
@@ -400,23 +730,18 @@ class WebHostController extends ChangeNotifier {
         final from = message['from'] as String?;
         if (from == null) return;
         unawaited(_applyIceCandidate(from, message));
-      case 'stats':
-        final from = message['from'] as String?;
-        if (from == null) return;
-        _handleLatencyReport(from, message['latencyMs']);
       default:
         break;
     }
   }
 
   Future<void> _connectPeer(String id) async {
-    final destination = _destination;
-    if (destination == null) return; // offered once a track is loaded
     try {
       final config = <String, Object?>{'iceServers': iceServers()}.jsify()
           as web.RTCConfiguration;
       final pc = web.RTCPeerConnection(config);
-      _pcs[id] = pc;
+      final peer = _Peer(pc);
+      _peers[id] = peer;
       pc.onicecandidate = ((web.Event event) {
         final candidate = _candidateOf(event);
         if (candidate == null) return; // gathering complete
@@ -429,26 +754,41 @@ class WebHostController extends ChangeNotifier {
         });
       }).toJS;
       pc.onconnectionstatechange = ((web.Event _) {
-        if (_pcs[id] != pc) return; // superseded by a newer connection
+        if (_peers[id] != peer) return; // superseded by a newer connection
         switch (pc.connectionState) {
           case 'connected':
-            _disconnectTimers.remove(id)?.cancel();
+            peer.disconnectTimer?.cancel();
+            peer.disconnectTimer = null;
           case 'disconnected':
             // Usually transient; give ICE a chance to recover.
-            _disconnectTimers[id] ??= Timer(
-              _disconnectGrace,
-              () => _dropListener(id),
-            );
+            peer.disconnectTimer ??= Timer(_disconnectGrace, () => _dropListener(id));
           case 'failed':
           case 'closed':
             _dropListener(id);
         }
       }).toJS;
 
-      final stream = destination.stream;
-      for (final track in stream.getAudioTracks().toDart) {
-        pc.addTrack(track, stream);
-      }
+      final control = pc.createDataChannel(
+        controlChannelLabel,
+        web.RTCDataChannelInit(ordered: true),
+      );
+      peer.control = control;
+      control.onopen = ((web.Event _) => _handleControlOpen(id)).toJS;
+      control.onmessage = ((web.MessageEvent event) {
+        final data = event.data;
+        if (data.isA<JSString>()) {
+          _handleControlFrame(id, (data as JSString).toDart);
+        }
+      }).toJS;
+
+      final file = pc.createDataChannel(
+        fileChannelLabel,
+        web.RTCDataChannelInit(ordered: true),
+      );
+      file.binaryType = 'arraybuffer';
+      peer.file = file;
+      file.onopen = ((web.Event _) => unawaited(_sendFile(id))).toJS;
+
       final offer = await pc.createOffer().toDart;
       if (offer == null) {
         throw StateError('createOffer returned no description.');
@@ -467,21 +807,20 @@ class WebHostController extends ChangeNotifier {
   }
 
   Future<void> _applyAnswer(String from, String sdp) async {
-    final pc = _pcs[from];
-    if (pc == null) return;
+    final peer = _peers[from];
+    if (peer == null) return;
     try {
-      await pc
+      await peer.pc
           .setRemoteDescription(
             web.RTCSessionDescriptionInit(type: 'answer', sdp: sdp),
           )
           .toDart;
-      _remoteSet.add(from);
+      peer.remoteSet = true;
       // Flush candidates that raced ahead of the answer.
-      final pending = _pendingIce.remove(from);
-      if (pending != null) {
-        for (final message in pending) {
-          await _applyIceCandidate(from, message);
-        }
+      final pending = List.of(peer.pendingIce);
+      peer.pendingIce.clear();
+      for (final message in pending) {
+        await _applyIceCandidate(from, message);
       }
     } catch (e, st) {
       reportError(e, st, context: 'webHost.applyAnswer');
@@ -492,15 +831,15 @@ class WebHostController extends ChangeNotifier {
     String from,
     Map<String, dynamic> message,
   ) async {
-    final pc = _pcs[from];
-    if (pc == null || !_remoteSet.contains(from)) {
-      // Remote description not applied yet (or the peer is still being
-      // created) — hold the candidate.
-      (_pendingIce[from] ??= []).add(message);
+    final peer = _peers[from];
+    if (peer == null) return;
+    if (!peer.remoteSet) {
+      // Remote description not applied yet — hold the candidate.
+      peer.pendingIce.add(message);
       return;
     }
     try {
-      await pc
+      await peer.pc
           .addIceCandidate(
             web.RTCIceCandidateInit(
               candidate: message['candidate'] as String? ?? '',
@@ -516,22 +855,17 @@ class WebHostController extends ChangeNotifier {
 
   void _dropListener(String id) {
     final removed = _listeners.remove(id) != null;
-    _latencies.remove(id);
-    unawaited(_closePeer(id));
-    if (removed) {
-      _applySyncDelay(force: true);
-      _notify();
-    }
+    _closePeer(id);
+    if (removed) _notify();
   }
 
-  Future<void> _closePeer(String id) async {
-    _disconnectTimers.remove(id)?.cancel();
-    _remoteSet.remove(id);
-    _pendingIce.remove(id);
-    final pc = _pcs.remove(id);
-    if (pc == null) return;
+  void _closePeer(String id) {
+    final peer = _peers.remove(id);
+    if (peer == null) return;
+    peer.disconnectTimer?.cancel();
+    peer.protocolTimer?.cancel();
     try {
-      pc.close();
+      peer.pc.close();
     } catch (_) {
       // Already closed.
     }
@@ -554,6 +888,7 @@ class WebHostController extends ChangeNotifier {
   void _installPageHideHook() {
     _removePageHideHook();
     final listener = ((web.Event _) {
+      _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
       _signaling?.send({'type': 'end'});
     }).toJS;
     _pageHideListener = listener;
@@ -571,23 +906,15 @@ class WebHostController extends ChangeNotifier {
   /// Ends the session: tells listeners, tears everything down, and returns
   /// the controller to its idle state so a new session can be started.
   Future<void> end() async {
+    _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
     _signaling?.send({'type': 'end'});
     _removePageHideHook();
     _stopSource();
-    for (final timer in _disconnectTimers.values) {
-      timer.cancel();
+    _stopReferenceTimer();
+    for (final id in _peers.keys.toList()) {
+      _closePeer(id);
     }
-    _disconnectTimers.clear();
-    for (final pc in _pcs.values) {
-      try {
-        pc.close();
-      } catch (_) {}
-    }
-    _pcs.clear();
-    _remoteSet.clear();
-    _pendingIce.clear();
     _listeners.clear();
-    _latencies.clear();
 
     sessionCode = '';
     joinCode = null;
@@ -595,14 +922,14 @@ class WebHostController extends ChangeNotifier {
     signalingLost = false;
     currentTrack = null;
     _buffer = null;
+    _fileBytes = null;
+    _fileMime = null;
     position = Duration.zero;
     playbackState = PlaybackState.stopped;
 
     final ctx = _ctx;
     _ctx = null;
-    _destination = null;
     _gain = null;
-    _delay = null;
     _notify();
 
     await _teardownSignaling();

@@ -5,16 +5,17 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/network/signaling/signaling_config.dart';
 import 'web_host_controller.dart'
-    show defaultSyncDelayMs, maxSyncTrimMs, minSyncTrimMs;
+    show ListenerPhase, WebListener, maxSpeakerOffsetMs, minSpeakerOffsetMs;
 import 'web_host_view_model.dart';
 import 'widgets/transport_controls.dart';
 
 /// The browser build's host screen.
 ///
 /// A browser can't run the HTTP/WebSocket servers a native host runs, so
-/// web hosting works differently: the browser decodes the picked file with
-/// WebAudio, plays it locally, and streams it to every joined listener over
-/// WebRTC. The WebRTC handshake goes through Supabase Realtime by default
+/// web hosting works over WebRTC instead: the browser sends the picked song
+/// to every joined device and starts them all — itself included — at the
+/// same scheduled instant. The WebRTC handshake goes through Supabase
+/// Realtime by default
 /// (works from any page — `flutter run`, GitHub Pages, …), or through the
 /// LAN relay (`dart run tool/web_relay.dart`) for no-internet setups.
 /// Listeners join with the `AMP-` code or link shown here.
@@ -243,14 +244,11 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             ),
           ),
         ],
-        if (track != null) ...[
+        if (track != null && controller.listenerCount > 0) ...[
           const SizedBox(height: 16),
-          _SyncDelayCard(
-            delayMs: controller.effectiveSyncDelayMs,
-            measuredMs: controller.measuredLatencyMs,
-            trimMs: controller.syncTrimMs,
-            hasListeners: controller.listenerCount > 0,
-            onTrimChanged: viewModel.setSyncTrim,
+          _SpeakerOffsetCard(
+            offsetMs: controller.speakerOffsetMs,
+            onChanged: viewModel.setSpeakerOffset,
           ),
         ],
         const SizedBox(height: 16),
@@ -276,11 +274,10 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
                     style: TextStyle(fontStyle: FontStyle.italic),
                   )
                 else
-                  ...controller.listenerNames.map(
-                    (name) => ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.headphones, size: 20),
-                      title: Text(name),
+                  ...controller.listeners.map(
+                    (listener) => _ListenerTile(
+                      listener: listener,
+                      hostPlaying: controller.playbackState.name == 'playing',
                     ),
                   ),
               ],
@@ -384,42 +381,59 @@ class _JoinCodeCard extends StatelessWidget {
   }
 }
 
-/// Keeps this browser's own speaker in step with the phones.
-///
-/// Every listener trails the host by its network + jitter-buffer + audio-output
-/// latency. Listeners measure the first two themselves and report them; the
-/// host delays only its own speaker (not the stream) by the slowest one. The
-/// fine-tune covers what can't be measured (the phone's speaker buffer).
-class _SyncDelayCard extends StatelessWidget {
-  const _SyncDelayCard({
-    required this.delayMs,
-    required this.measuredMs,
-    required this.trimMs,
-    required this.hasListeners,
-    required this.onTrimChanged,
-  });
+/// One connected device and how its sync is going.
+class _ListenerTile extends StatelessWidget {
+  const _ListenerTile({required this.listener, required this.hostPlaying});
 
-  final int delayMs;
-  final int? measuredMs;
-  final int trimMs;
-  final bool hasListeners;
-  final ValueChanged<int> onTrimChanged;
+  final WebListener listener;
+  final bool hostPlaying;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    void nudge(int by) => onTrimChanged((trimMs + by).clamp(minSyncTrimMs, maxSyncTrimMs));
-    final String status;
-    if (!hasListeners) {
-      status = 'Syncs automatically once a device joins.';
-    } else if (measuredMs != null) {
-      status = 'Listeners trail by ~$measuredMs ms (measured automatically). '
-          'This speaker waits $delayMs ms so you all hear it together.';
-    } else {
-      status = 'Waiting for listeners to report their delay — using '
-          '$defaultSyncDelayMs ms. (Older app versions don\'t report it.)';
-    }
-    final trimLabel = trimMs == 0 ? '0 ms' : '${trimMs > 0 ? '+' : ''}$trimMs ms';
+    final drift = listener.driftMs;
+    final (IconData icon, Color? color, String status) = switch (listener.phase) {
+      ListenerPhase.needsUpdate => (
+          Icons.system_update,
+          theme.colorScheme.error,
+          'Needs the latest Ampme app (or reload the web page) to play in sync',
+        ),
+      ListenerPhase.connecting => (Icons.sync, null, 'Connecting…'),
+      ListenerPhase.receivingSong => (
+          Icons.downloading,
+          null,
+          'Getting the song… ${(listener.fileProgress * 100).round()}%',
+        ),
+      ListenerPhase.ready when hostPlaying && drift != null => drift.abs() <= 40
+          ? (Icons.check_circle, Colors.green, 'In sync (${_signed(drift)} ms)')
+          : (Icons.timelapse, Colors.orange, 'Catching up (${_signed(drift)} ms)'),
+      ListenerPhase.ready => (Icons.check_circle_outline, null, 'Ready'),
+    };
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, size: 20, color: color),
+      title: Text(listener.name),
+      subtitle: Text(status),
+    );
+  }
+
+  static String _signed(int ms) => ms > 0 ? '+$ms' : '$ms';
+}
+
+/// Shifts this browser's own speaker against the phones, for what the app
+/// can't measure (a phone on Bluetooth, a slow sound card).
+class _SpeakerOffsetCard extends StatelessWidget {
+  const _SpeakerOffsetCard({required this.offsetMs, required this.onChanged});
+
+  final int offsetMs;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    void nudge(int by) =>
+        onChanged((offsetMs + by).clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs));
+    final label = offsetMs == 0 ? '0 ms' : '${offsetMs > 0 ? '+' : ''}$offsetMs ms';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -429,45 +443,38 @@ class _SyncDelayCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text('Sync with the phones', style: theme.textTheme.titleMedium),
+                  child: Text('This speaker', style: theme.textTheme.titleMedium),
                 ),
-                Text(hasListeners ? '$delayMs ms' : 'Auto', style: theme.textTheme.titleMedium),
+                Text(label, style: theme.textTheme.titleMedium),
               ],
             ),
             const SizedBox(height: 4),
-            Text(status, style: theme.textTheme.bodySmall),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: Text('Fine-tune', style: theme.textTheme.labelLarge)),
-                Text(trimLabel, style: theme.textTheme.labelLarge),
-              ],
-            ),
             Text(
-              'Still ahead of the phones? Add delay. Behind them? Remove some.',
+              'All devices start together automatically. If this computer '
+              'still sounds ahead of the phones, add delay; behind, remove some.',
               style: theme.textTheme.bodySmall,
             ),
             Row(
               children: [
                 IconButton(
                   icon: const Icon(Icons.remove),
-                  tooltip: 'Less delay (-10 ms)',
-                  onPressed: trimMs > minSyncTrimMs ? () => nudge(-10) : null,
+                  tooltip: 'Earlier (-10 ms)',
+                  onPressed: offsetMs > minSpeakerOffsetMs ? () => nudge(-10) : null,
                 ),
                 Expanded(
                   child: Slider(
-                    value: trimMs.toDouble(),
-                    min: minSyncTrimMs.toDouble(),
-                    max: maxSyncTrimMs.toDouble(),
-                    divisions: (maxSyncTrimMs - minSyncTrimMs) ~/ 10,
-                    label: trimLabel,
-                    onChanged: (v) => onTrimChanged(v.round()),
+                    value: offsetMs.toDouble(),
+                    min: minSpeakerOffsetMs.toDouble(),
+                    max: maxSpeakerOffsetMs.toDouble(),
+                    divisions: (maxSpeakerOffsetMs - minSpeakerOffsetMs) ~/ 10,
+                    label: label,
+                    onChanged: (v) => onChanged(v.round()),
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.add),
-                  tooltip: 'More delay (+10 ms)',
-                  onPressed: trimMs < maxSyncTrimMs ? () => nudge(10) : null,
+                  tooltip: 'Later (+10 ms)',
+                  onPressed: offsetMs < maxSpeakerOffsetMs ? () => nudge(10) : null,
                 ),
               ],
             ),

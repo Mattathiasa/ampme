@@ -114,13 +114,18 @@ The web build **hosts** sessions and **joins** them, from any copy of the app
 (`https://mattathiasa.github.io/ampme/web/`), or a LAN server.
 
 **Hosting from a browser**: a browser can't run the audio/control server a
-native host runs (no inbound TCP), so instead it plays the picked file with
-WebAudio and streams it to every listener over **WebRTC** (~30-80ms latency
-on a LAN). The WebRTC handshake goes through **Supabase Realtime** broadcast
+native host runs (no inbound TCP), so it uses **WebRTC data channels**
+instead: it sends the picked song to every listener, then drives playback
+with the same sync protocol phone-hosted sessions use — clock sync,
+pre-buffering, a start at one scheduled instant, and a position reference
+every second for drift correction. Every device (the browser itself, Android
+apps, other browsers) plays its own copy in step. The WebRTC handshake goes
+through **Supabase Realtime** broadcast
 (cloud signaling, `lib/core/network/signaling/`): open the app, **Host a
 Session → Start Session**, pick a song, and share the `AMP-XXXXXX` code, the
 join link, or the QR code (any phone camera opens the link and joins).
-Only the handshake touches the cloud — the audio flows device-to-device.
+Only the handshake touches the cloud — the song and the sync messages flow
+device-to-device.
 
 ```sh
 flutter run -d chrome     # works out of the box; no relay needed
@@ -160,9 +165,15 @@ Google's CDN, so the LAN-relay copy also loads with no internet).
 
 Web-hosting notes:
 
-- Sessions are **live**: listeners can't seek, and there's no position
-  sync/clock-sync (the audio arrives in real time over WebRTC). The host's
-  own playback is delayed ~60ms to roughly match what listeners hear.
+- The song is copied to each device before it can play (a few seconds for a
+  typical MP3; the host shows each device's progress, then **Ready** and
+  **In sync (±N ms)** while playing). Late joiners get the song and jump in
+  at the right spot.
+- Listeners need v1.2.0 or newer (older apps expected a live audio stream;
+  the host flags them with "Needs the latest Ampme app").
+- Each device's speaker/Bluetooth latency isn't visible to the app; if the
+  host computer still sounds ahead of (or behind) the phones, nudge **This
+  speaker** on the host screen.
 - Browsers may block audio until the listener taps the page (autoplay
   policy); the join screen then shows **Tap to start audio**.
 - Keep the hosting tab open and visible — browsers throttle background tabs

@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'clock_sync.dart';
+import 'control_link.dart';
 import 'models/control_message.dart';
 import 'network_utils.dart';
+
+export 'control_link.dart' show ReconnectionStatus;
 
 const int _syncBurstCount = 8;
 const Duration _syncBurstInterval = Duration(milliseconds: 200);
@@ -14,11 +17,6 @@ const Duration _syncBurstInterval = Duration(milliseconds: 200);
 // what turns a phone clock that's seconds off into audible playback lag.
 // Cost on a LAN is trivial: one tiny request/response pair per device.
 const Duration _syncSteadyInterval = Duration(seconds: 2);
-
-/// Reconnection lifecycle reported to the session controller while the client
-/// tries to recover from a transient drop (WiFi blip, host briefly
-/// backgrounded) before giving up and reporting the host as gone.
-enum ReconnectionStatus { attempting, succeeded, failed }
 
 /// Exponential-backoff delays between reconnection attempts (1s, 2s, 4s).
 const List<Duration> _reconnectDelays = [
@@ -38,7 +36,7 @@ const Duration _reconnectProbeTimeout = Duration(seconds: 2);
 /// Transient drops (WiFi blip, host briefly backgrounded) are recovered
 /// automatically: the client reconnects with exponential backoff and only
 /// reports the host as gone ([disconnected]) after every attempt fails.
-class ControlClient {
+class ControlClient implements ControlLink {
   ControlClient({required this.deviceId});
 
   final String deviceId;
@@ -67,22 +65,27 @@ class ControlClient {
       StreamController<ReconnectionStatus>.broadcast();
   bool _disconnectedEmitted = false;
 
+  @override
   Stream<ControlMessage> get messages => _messageController.stream;
 
   /// Fires only after every reconnection attempt has failed — i.e. the host
   /// is really gone, not just briefly unreachable.
+  @override
   Stream<void> get disconnected => _disconnectedController.stream;
 
   /// Emits [ReconnectionStatus.attempting]/[succeeded]/[failed] while a
   /// transient drop is being recovered.
+  @override
   Stream<ReconnectionStatus> get reconnectionStatus =>
       _reconnectionController.stream;
 
+  @override
   ClockSyncEstimate? get clockEstimate => _estimator.currentEstimate;
 
   /// Number of clock-sync samples collected so far this session — lets the
   /// session controller tell "a fresh estimate is arriving" from "no data
   /// yet" when it schedules a synchronized start.
+  @override
   int get syncSampleCount => _estimator.sampleCount;
 
   /// Wall-clock time the most recent clock-sync sample was recorded at.
@@ -94,6 +97,7 @@ class ControlClient {
 
   /// Whether the estimator already holds a sample young enough to convert
   /// host times with, so callers can skip [syncNow]'s fresh-burst wait.
+  @override
   bool isSyncFresh({Duration within = const Duration(milliseconds: 600)}) {
     final t = _lastSyncSampleAt;
     return t != null && DateTime.now().difference(t) <= within;
@@ -104,6 +108,7 @@ class ControlClient {
   /// lag: a fresh burst yields low-latency samples within a few hundred ms
   /// (inside the scheduling lead time), so the host->local time conversion
   /// uses a current offset rather than a stale or zero one.
+  @override
   void syncNow() {
     _syncTimer?.cancel();
     _syncBurstRemaining = _syncBurstCount;
@@ -267,6 +272,7 @@ class ControlClient {
     );
   }
 
+  @override
   void send(ControlMessage message) {
     _channel?.sink.add(message.encode());
   }
@@ -284,6 +290,7 @@ class ControlClient {
     _lastSyncSampleAt = null;
   }
 
+  @override
   Future<void> dispose() async {
     _disposed = true;
     await disconnect();

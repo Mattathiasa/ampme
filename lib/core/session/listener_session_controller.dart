@@ -6,6 +6,7 @@ import '../audio/audio_engine.dart';
 import '../audio/just_audio_engine.dart';
 import '../observability/reporting.dart';
 import '../network/control_client.dart';
+import '../network/control_link.dart';
 import 'active_session.dart';
 import '../network/models/control_message.dart';
 import '../network/models/device_info.dart';
@@ -25,6 +26,10 @@ const Duration _scheduleLeadTime = Duration(milliseconds: 800);
 /// [_scheduleLeadTime]).
 const Duration _freshSyncWait = Duration(milliseconds: 350);
 
+/// Turns a track the host announced into a URI the audio engine can play.
+/// Returns null when the track can't be played (the load is skipped).
+typedef TrackResolver = Future<Uri?> Function(TrackInfo track);
+
 /// Orchestrates a joined session: owns the audio engine (playing the
 /// host's stream URL), the control client (clock sync + incoming
 /// play/pause/seek/track commands), and periodic status reporting back to
@@ -32,13 +37,25 @@ const Duration _freshSyncWait = Duration(milliseconds: 350);
 /// with `provider`.
 class ListenerSessionController extends ChangeNotifier
     implements ActiveSession {
-  ListenerSessionController({required this.selfDevice, AudioEngine? audioEngine})
-    : audioEngine = audioEngine ?? JustAudioEngine();
+  ListenerSessionController({
+    required this.selfDevice,
+    AudioEngine? audioEngine,
+    this.trackResolver,
+  }) : audioEngine = audioEngine ?? JustAudioEngine();
 
   final DeviceInfo selfDevice;
   final AudioEngine audioEngine;
 
-  ControlClient? _client;
+  /// How announced tracks become playable URIs. Null (phone-hosted sessions)
+  /// streams `track.streamUrl` from the host's LAN HTTP server; browser-hosted
+  /// sessions resolve to the song bytes received over WebRTC.
+  final TrackResolver? trackResolver;
+
+  ControlLink? _client;
+
+  /// Whether the host's latest command was play/seek (vs pause): lets a
+  /// browser listener that was blocked from autoplaying start on a tap.
+  bool hostIsPlaying = false;
   StreamSubscription? _messagesSub;
   StreamSubscription? _positionSub;
   StreamSubscription? _stateSub;
@@ -103,6 +120,10 @@ class ListenerSessionController extends ChangeNotifier
   @override
   Future<void> unlockAudio() async {}
 
+  /// Songs stream from the host on demand; nothing is copied up front.
+  @override
+  double? get trackDownloadProgress => null;
+
   /// Sets this device's local playback volume without affecting other devices.
   @override
   Future<void> setLocalVolume(double value) async {
@@ -115,7 +136,26 @@ class ListenerSessionController extends ChangeNotifier
     final client = ControlClient(deviceId: selfDevice.deviceId);
     _client = client;
     await client.connect(hostIp: hostIp, controlPort: controlPort);
+    attach(client);
+  }
 
+  /// Runs the session over an already-open [link] (used directly for
+  /// browser-hosted sessions, whose link is a WebRTC data channel).
+  void attach(ControlLink link) {
+    final previous = _client;
+    if (previous != null && !identical(previous, link)) {
+      // A replacement link (the host re-connected us): drop the old one's
+      // subscriptions; playback and the loaded track carry over.
+      unawaited(_messagesSub?.cancel());
+      unawaited(_positionSub?.cancel());
+      unawaited(_stateSub?.cancel());
+      unawaited(_disconnectedSub?.cancel());
+      unawaited(_reconnectionSub?.cancel());
+      _statusTimer?.cancel();
+      unawaited(previous.dispose());
+    }
+    final client = link;
+    _client = client;
     _messagesSub = client.messages.listen(_handleMessage);
     _positionSub = audioEngine.positionStream.listen((pos) {
       // just_audio emits ~4x/sec; only rebuild when the visible (whole
@@ -187,9 +227,11 @@ class ListenerSessionController extends ChangeNotifier
   void _handleMessage(ControlMessage message) {
     switch (message.type) {
       case ControlMessageType.welcome:
+        hostIsPlaying = message.payload['playbackState'] == 'playing';
         _pendingWelcome = _handleWelcome(message);
         unawaited(_pendingWelcome!);
       case ControlMessageType.trackChanged:
+        hostIsPlaying = false;
         currentTrack = TrackInfo.fromJson(message.payload);
         // Pre-buffer the new track from its start (the host loads tracks
         // paused at position 0) so a follow-up play command starts instantly.
@@ -199,8 +241,10 @@ class ListenerSessionController extends ChangeNotifier
         unawaited(_handlePrepare(message));
       case ControlMessageType.play:
       case ControlMessageType.seek:
+        hostIsPlaying = true;
         unawaited(_handleScheduledStart(message));
       case ControlMessageType.pause:
+        hostIsPlaying = false;
         audioEngine.pause();
       case ControlMessageType.positionSync:
         _handlePositionSync(message);
@@ -336,6 +380,20 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   Future<void> _performLoad(TrackInfo track, {required Duration preBufferAt}) async {
+    final resolver = trackResolver;
+    if (resolver != null) {
+      final Uri? uri;
+      try {
+        uri = await resolver(track);
+      } catch (e, st) {
+        reportError(e, st, context: 'resolveTrack');
+        return;
+      }
+      // A newer track may have been announced while this one was arriving.
+      if (uri == null || currentTrack?.trackId != track.trackId) return;
+      await _loadUri(uri, track, preBufferAt: preBufferAt);
+      return;
+    }
     final streamUri = Uri.parse(track.streamUrl);
     // LAN-only: refuse to load an audio stream from a non-private host, even
     // if a malicious/buggy host broadcasts a track pointing elsewhere.
@@ -347,6 +405,10 @@ class ListenerSessionController extends ChangeNotifier
       );
       return;
     }
+    await _loadUri(streamUri, track, preBufferAt: preBufferAt);
+  }
+
+  Future<void> _loadUri(Uri streamUri, TrackInfo track, {required Duration preBufferAt}) async {
     try {
       await audioEngine.loadUrl(streamUri, title: track.fileName);
       if (track.isLive) {
@@ -442,6 +504,14 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   void _sendStatus() {
+    // Report the current clock estimate, not the one captured at the last
+    // start: the host times this report with roundTripMs, and a stale value
+    // (e.g. measured while a song was still transferring) skews its drift.
+    final estimate = _client?.clockEstimate;
+    if (estimate != null) {
+      clockOffsetMs = estimate.offsetMs;
+      roundTripMs = estimate.roundTripMs;
+    }
     _client?.send(
       ControlMessage.listenerStatusUpdate(
         senderId: selfDevice.deviceId,
