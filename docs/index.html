@@ -3,586 +3,529 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ampme — Every phone in the room, in sync</title>
-<meta name="description" content="Play audio on one phone and every phone on the same WiFi plays it back in perfect sync. No cables, no cloud. Free Android APK.">
-<meta property="og:title" content="Ampme — Every phone in the room, in sync">
-<meta property="og:description" content="Play audio on one phone and every phone on the same WiFi plays it back in perfect sync. No cables, no cloud.">
+<title>Ampme — One room. One beat.</title>
+<meta name="description" content="Turn every phone in the room into one giant speaker. Songs, videos and browser tabs play on every device at the same instant. Free for Android and the web.">
+<meta property="og:title" content="Ampme — One room. One beat.">
+<meta property="og:description" content="Every phone in the room plays the same song at the same instant. Songs, videos, YouTube tabs. Free for Android and the web.">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%239B7BFF'/%3E%3Cstop offset='1' stop-color='%239DB38A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cg fill='%23fff'%3E%3Crect x='14' y='24' width='5.6' height='16' rx='2.8'/%3E%3Crect x='23' y='16' width='5.6' height='32' rx='2.8'/%3E%3Crect x='32' y='10' width='5.6' height='44' rx='2.8'/%3E%3Crect x='41' y='20' width='5.6' height='24' rx='2.8'/%3E%3Crect x='50' y='27' width='5.6' height='10' rx='2.8'/%3E%3C/g%3E%3C/svg%3E">
+<meta name="theme-color" content="#0B0B0F">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='19' fill='%23D4FF3A'/%3E%3Cg fill='%230B0B0F'%3E%3Crect x='15' y='25.5' width='5' height='13' rx='2.5'/%3E%3Crect x='23' y='19.5' width='5' height='25' rx='2.5'/%3E%3Crect x='31' y='16' width='5' height='32' rx='2.5'/%3E%3Crect x='39' y='22' width='5' height='20' rx='2.5'/%3E%3Crect x='47' y='26.5' width='5' height='11' rx='2.5'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Ampme brand palette — matches lib/theme/app_theme.dart */
-    --purple: #7C5CE0;
-    --purple-bright: #9B7BFF;
-    --sage: #9DB38A;
-    --sage-bright: #B6CCA1;
-    --bg: #140F1F;
-    --surface: #1C1630;
-    --surface-2: #241C3B;
-    --surface-3: #2E2447;
-    --outline: #473A63;
-    --text: #EDE8F7;
-    --text-dim: #B6AECB;
-    --text-faint: #8a82a5;
-    --radius: 22px;
-    --shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.55);
-    --font-display: "Space Grotesk", system-ui, sans-serif;
-    --font-body: "Inter", system-ui, sans-serif;
+    --ink: #0B0B0F;
+    --surface: #14141A;
+    --surface-2: #1C1C24;
+    --hairline: #2A2A35;
+    --glass: rgba(255, 255, 255, 0.06);
+    --glass-stroke: rgba(255, 255, 255, 0.12);
+    --text: #F4F4F0;
+    --dim: #9A9AA6;
+    --volt: #D4FF3A;
+    --on-volt: #0B0B0F;
+    --signal: #FF4D2E;
+    --glow: 1;
+    --radius: 28px;
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --body: "Inter", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ink: #F4F3EE;
+      --surface: #FFFFFF;
+      --surface-2: #EDEBE3;
+      --hairline: #DAD8CF;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-stroke: rgba(11, 11, 15, 0.10);
+      --text: #0B0B0F;
+      --dim: #5F5F6B;
+      --volt: #6E8A00;
+      --on-volt: #FFFFFF;
+      --signal: #E5391B;
+      --glow: 0.35;
+      color-scheme: light;
+    }
   }
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
-
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
-    font-family: var(--font-body);
-    background: var(--bg);
+    margin: 0;
+    background: var(--ink);
     color: var(--text);
-    line-height: 1.6;
+    font-family: var(--body);
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
   }
+  a { color: inherit; }
+  ::selection { background: var(--volt); color: var(--on-volt); }
 
-  ::selection { background: var(--purple); color: #fff; }
-
-  /* ---------- backdrop ---------- */
-  .backdrop {
-    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  .bloom {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background:
-      radial-gradient(900px 480px at 15% -5%, rgba(124, 92, 224, 0.22), transparent 60%),
-      radial-gradient(800px 420px at 90% 10%, rgba(157, 179, 138, 0.12), transparent 55%),
-      radial-gradient(700px 500px at 50% 110%, rgba(124, 92, 224, 0.10), transparent 60%),
-      var(--bg);
+      radial-gradient(60vw 50vw at 95% -10%, color-mix(in srgb, var(--volt) calc(14% * var(--glow) + 3%), transparent), transparent 70%),
+      radial-gradient(55vw 45vw at -10% 110%, color-mix(in srgb, var(--signal) calc(10% * var(--glow) + 2%), transparent), transparent 70%);
   }
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
 
   /* ---------- nav ---------- */
   nav {
-    position: sticky; top: 0; z-index: 50;
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; padding: 14px clamp(20px, 5vw, 64px);
-    background: rgba(20, 15, 31, 0.78);
-    backdrop-filter: blur(14px);
-    border-bottom: 1px solid rgba(71, 58, 99, 0.35);
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    background: color-mix(in srgb, var(--ink) 72%, transparent);
+    border-bottom: 1px solid var(--glass-stroke);
   }
-  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
-  .brand svg { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 4px 14px rgba(124, 92, 224, 0.45); }
-  nav .links { display: flex; align-items: center; gap: 26px; }
-  nav .links a { color: var(--text-dim); text-decoration: none; font-size: 14.5px; font-weight: 500; transition: color 0.2s; }
-  nav .links a:hover { color: var(--text); }
-  nav .btn { display: none; }
-  @media (min-width: 860px) { nav .btn { display: inline-flex; } nav .links { gap: 34px; } }
-  @media (max-width: 700px) { nav .links a:not(.btn) { display: none; } }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .brand { display: flex; align-items: center; gap: 12px; font-family: var(--display); font-weight: 700; letter-spacing: 0.14em; text-decoration: none; }
+  .brand svg { width: 34px; height: 34px; filter: drop-shadow(0 0 calc(14px * var(--glow)) color-mix(in srgb, var(--volt) 55%, transparent)); }
+  .links { display: flex; align-items: center; gap: 26px; }
+  .links a:not(.btn) { text-decoration: none; color: var(--dim); font-weight: 500; font-size: 15px; transition: color .2s; }
+  .links a:not(.btn):hover { color: var(--text); }
+  @media (max-width: 760px) { .links a:not(.btn) { display: none; } }
 
   /* ---------- buttons ---------- */
   .btn {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--font-body); font-weight: 600; font-size: 15px;
-    text-decoration: none; cursor: pointer; border: none;
-    border-radius: 15px; padding: 13px 22px;
-    transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    height: 48px; padding: 0 24px; border-radius: 999px;
+    font-weight: 700; font-size: 15px; text-decoration: none; border: 0; cursor: pointer;
+    transition: transform .16s cubic-bezier(.2,.8,.2,1), box-shadow .3s, background .2s;
+    font-family: var(--body);
   }
-  .btn:active { transform: translateY(1px) scale(0.99); }
+  .btn:active { transform: scale(.96); }
   .btn-primary {
-    background: linear-gradient(135deg, var(--purple-bright), var(--purple));
-    color: #fff;
-    box-shadow: 0 10px 30px -8px rgba(124, 92, 224, 0.7);
+    background: var(--volt); color: var(--on-volt);
+    box-shadow: 0 0 calc(32px * var(--glow)) -4px color-mix(in srgb, var(--volt) 60%, transparent);
   }
-  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 40px -8px rgba(124, 92, 224, 0.85); }
-  .btn-ghost {
-    background: var(--surface-2); color: var(--text);
-    border: 1px solid var(--outline);
-  }
-  .btn-ghost:hover { background: var(--surface-3); transform: translateY(-2px); }
-  .btn-lg { padding: 16px 30px; font-size: 16.5px; border-radius: 17px; }
+  .btn-primary:hover { box-shadow: 0 0 calc(48px * var(--glow)) 0 color-mix(in srgb, var(--volt) 60%, transparent); transform: translateY(-1px); }
+  .btn-ghost { background: var(--glass); color: var(--text); border: 1.5px solid var(--glass-stroke); }
+  .btn-ghost:hover { border-color: var(--volt); }
+  .btn-lg { height: 58px; padding: 0 30px; font-size: 16px; }
+  .btn svg { width: 20px; height: 20px; }
 
   /* ---------- hero ---------- */
-  header {
-    position: relative;
-    display: grid; grid-template-columns: 1.05fr 0.95fr;
-    align-items: center; gap: 40px;
-    max-width: 1180px; margin: 0 auto;
-    padding: clamp(48px, 8vw, 110px) clamp(20px, 5vw, 64px) clamp(48px, 6vw, 80px);
-  }
-  @media (max-width: 900px) { header { grid-template-columns: 1fr; text-align: center; } }
-
+  header { padding: 72px 0 40px; }
+  .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: center; }
+  @media (max-width: 960px) { .hero { grid-template-columns: 1fr; } }
   .pill {
-    display: inline-flex; align-items: center; gap: 8px;
-    background: rgba(157, 179, 138, 0.12);
-    border: 1px solid rgba(157, 179, 138, 0.35);
-    color: var(--sage-bright);
-    font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
-    padding: 7px 14px; border-radius: 999px; margin-bottom: 22px;
-    text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 7px 14px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--volt) 45%, transparent);
+    background: color-mix(in srgb, var(--volt) 12%, transparent);
+    color: var(--volt); font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
   }
-  .pill .dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--sage-bright);
-    animation: pulse 1.8s ease-in-out infinite;
-  }
-  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
-
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; animation: pulse 1.1s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
   h1 {
-    font-family: var(--font-display);
-    font-size: clamp(38px, 5.4vw, 62px);
-    line-height: 1.06; letter-spacing: -0.03em; font-weight: 700;
-    margin-bottom: 20px;
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(52px, 8.2vw, 112px); line-height: .9; letter-spacing: -0.045em;
+    margin: 26px 0 26px;
   }
-  h1 .grad {
-    background: linear-gradient(100deg, var(--purple-bright) 10%, #c9b8ff 45%, var(--sage-bright) 90%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .lead { color: var(--text-dim); font-size: clamp(16px, 1.6vw, 19px); max-width: 540px; margin-bottom: 34px; }
-  @media (min-width: 901px) { header .col:first-child .lead { margin-right: 0; } }
-  @media (max-width: 900px) { .lead { margin-left: auto; margin-right: auto; } }
+  h1 .v { color: var(--volt); text-shadow: 0 0 calc(40px * var(--glow)) color-mix(in srgb, var(--volt) 45%, transparent); }
+  h1 .nw { white-space: nowrap; }
+  .lead { font-size: clamp(17px, 2vw, 20px); color: var(--dim); max-width: 34em; margin: 0 0 32px; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .meta { margin-top: 18px; color: var(--dim); font-size: 14px; }
+  .meta b { color: var(--text); font-weight: 600; }
 
-  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 26px; }
-  @media (max-width: 900px) { .cta-row { justify-content: center; } }
+  #eq { display: block; width: 100%; height: 140px; margin-top: 56px; }
 
-  .meta-note { color: var(--text-faint); font-size: 13.5px; }
-  .meta-note b { color: var(--text-dim); font-weight: 600; }
-
-  .stat-row {
-    display: flex; gap: 0; margin-top: 38px; padding-top: 28px;
-    border-top: 1px solid rgba(71, 58, 99, 0.4);
-    flex-wrap: wrap;
-  }
-  .stat { flex: 1; min-width: 130px; }
-  @media (max-width: 900px) { .stat-row { justify-content: center; gap: 18px; } .stat { min-width: 100px; } }
-  .stat .num { font-family: var(--font-display); font-size: 26px; font-weight: 700; color: var(--purple-bright); }
-  .stat .lbl { font-size: 12.5px; color: var(--text-faint); letter-spacing: 0.03em; text-transform: uppercase; }
-
-  /* ---------- phone mockup ---------- */
-  .phone-wrap { display: flex; justify-content: center; perspective: 1200px; }
+  /* phone mockup */
   .phone {
-    width: min(320px, 78vw); aspect-ratio: 9 / 19;
-    border-radius: 44px; padding: 11px;
-    background: linear-gradient(160deg, #3a2f5e, #1a1428 60%);
-    box-shadow: var(--shadow), 0 0 0 1px rgba(155, 123, 255, 0.25), 0 0 120px -30px rgba(124, 92, 224, 0.5);
-    transform: rotateY(-8deg) rotateX(2deg);
-    transition: transform 0.5s ease;
+    width: min(340px, 100%); margin: 0 auto; aspect-ratio: 9 / 18.5;
+    border-radius: 48px; padding: 12px;
+    background: linear-gradient(160deg, #2a2a33, #0d0d12);
+    box-shadow: 0 40px 80px -30px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.08), 0 0 calc(90px * var(--glow)) -30px var(--volt);
+    transform: rotate(3deg);
+    animation: float 6s ease-in-out infinite;
   }
-  .phone:hover { transform: rotateY(0deg) rotateX(0deg); }
+  @keyframes float { 50% { transform: rotate(3deg) translateY(-10px); } }
   .screen {
-    width: 100%; height: 100%; border-radius: 34px; overflow: hidden;
-    background: var(--surface);
-    display: flex; flex-direction: column;
-    border: 1px solid rgba(71, 58, 99, 0.6);
+    height: 100%; border-radius: 38px; overflow: hidden; position: relative;
+    background:
+      radial-gradient(120% 60% at 100% 0%, rgba(212,255,58,.14), transparent 60%),
+      #0B0B0F;
+    color: #F4F4F0; padding: 54px 18px 18px; display: flex; flex-direction: column; gap: 12px;
   }
-  .screen .notch { height: 26px; display: flex; justify-content: center; align-items: center; }
-  .screen .notch::before { content: ""; width: 92px; height: 22px; border-radius: 14px; background: #0d0a16; }
-  .screen .appbar { padding: 8px 18px 0; font-family: var(--font-display); font-size: 16px; font-weight: 600; }
-  .screen .sub { padding: 2px 18px 12px; font-size: 11.5px; color: var(--text-faint); }
-  .screen .card {
-    margin: 8px 14px; padding: 13px 14px; border-radius: 15px;
-    background: var(--surface-2); border: 1px solid var(--outline);
+  .screen .notch { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 92px; height: 26px; border-radius: 20px; background: #000; }
+  .screen .s-pill { align-self: flex-start; font-size: 9.5px; padding: 5px 10px; color: #D4FF3A; border-color: rgba(212,255,58,.45); background: rgba(212,255,58,.12); }
+  .screen h4 { margin: 0; font-family: var(--display); font-size: 30px; line-height: 1; letter-spacing: -0.03em; }
+  .screen .sub { font-size: 12px; color: #9A9AA6; margin-top: -6px; }
+  .now {
+    border-radius: 24px; padding: 16px; border: 1.5px solid rgba(212,255,58,.55);
+    background: linear-gradient(135deg, rgba(212,255,58,.07), rgba(255,255,255,.04));
   }
-  .screen .card .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-  .screen .card .name { font-size: 14px; font-weight: 600; }
-  .screen .card .addr { font-size: 11px; color: var(--text-faint); font-family: monospace; }
-  .sync-badge {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 10.5px; font-weight: 700; color: var(--sage-bright);
-    background: rgba(157, 179, 138, 0.14); border: 1px solid rgba(157, 179, 138, 0.35);
-    padding: 3px 8px; border-radius: 999px;
-  }
-  .sync-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--sage-bright); animation: pulse 1.6s infinite; }
-  .screen .codebox {
-    margin: 10px 14px; padding: 11px 13px; border-radius: 13px;
-    background: var(--surface-3); border: 1px solid var(--outline);
-    font-family: monospace; font-size: 12.5px; color: var(--purple-bright);
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .screen .codebox .tag { font-family: var(--font-body); font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
-  .screen .eq {
-    margin-top: auto; padding: 14px 18px 22px;
-    display: flex; flex-direction: column; gap: 6px; align-items: center;
-  }
-  .screen .eq .label { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; }
-  .eq-bars { display: flex; align-items: flex-end; gap: 4px; height: 34px; }
-  .eq-bars span {
-    width: 5px; border-radius: 3px;
-    background: linear-gradient(to top, var(--purple), var(--sage));
-    animation: eq 1.1s ease-in-out infinite;
-  }
-  .eq-bars span:nth-child(1) { animation-delay: 0s; }
-  .eq-bars span:nth-child(2) { animation-delay: 0.15s; }
-  .eq-bars span:nth-child(3) { animation-delay: 0.3s; }
-  .eq-bars span:nth-child(4) { animation-delay: 0.45s; }
-  .eq-bars span:nth-child(5) { animation-delay: 0.6s; }
-  .eq-bars span:nth-child(6) { animation-delay: 0.75s; }
-  .eq-bars span:nth-child(7) { animation-delay: 0.9s; }
-  @keyframes eq { 0%, 100% { height: 22%; } 50% { height: 100%; } }
+  .mini-eq { display: flex; align-items: flex-end; gap: 4px; height: 56px; }
+  .mini-eq span { flex: 1; border-radius: 99px; background: linear-gradient(to top, #D4FF3A 60%, #FF8A4D); height: 30%; animation: bar 1s ease-in-out infinite alternate; }
+  @keyframes bar { to { height: 100%; } }
+  .now .k { font-size: 9px; letter-spacing: .14em; color: #D4FF3A; font-weight: 800; margin-top: 12px; }
+  .now .t { font-family: var(--display); font-weight: 700; font-size: 18px; }
+  .track { height: 5px; border-radius: 9px; background: #2A2A35; margin: 10px 0 4px; overflow: hidden; }
+  .track i { display: block; height: 100%; width: 38%; background: #D4FF3A; border-radius: 9px; animation: prog 12s linear infinite; }
+  @keyframes prog { from { width: 8%; } to { width: 92%; } }
+  .times { display: flex; justify-content: space-between; font: 500 10px var(--mono); color: #9A9AA6; }
+  .dev { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 18px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); }
+  .dev .av { width: 32px; height: 32px; border-radius: 11px; background: #D4FF3A; display: grid; place-items: center; }
+  .dev .av svg { width: 16px; height: 16px; }
+  .dev .n { font-size: 12.5px; font-weight: 600; }
+  .dev .st { font-size: 10.5px; color: #D4FF3A; font-weight: 600; }
+  .ring { margin-left: auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    background: conic-gradient(#D4FF3A 0 92%, #2A2A35 0); position: relative; font: 700 9px var(--mono); color: #D4FF3A; }
+  .ring::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #16161C; }
+  .ring b { position: relative; }
+  .invite { margin-top: auto; display: flex; align-items: center; gap: 5px; padding: 12px; border-radius: 18px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); }
+  .invite small { font: 700 10px var(--mono); color: #9A9AA6; margin-right: 3px; }
+  .invite i { font: 700 15px var(--mono); font-style: normal; color: #D4FF3A; width: 24px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: rgba(212,255,58,.1); border: 1px solid rgba(212,255,58,.35); }
+
+  /* ---------- marquee ---------- */
+  .marquee { border-block: 1px solid var(--glass-stroke); overflow: hidden; padding: 18px 0; margin: 48px 0 0; position: relative; z-index: 1; }
+  .marquee .row { display: flex; gap: 48px; width: max-content; animation: scroll 32s linear infinite; }
+  .marquee span { font-family: var(--display); font-weight: 700; font-size: clamp(22px, 3.2vw, 36px); letter-spacing: -0.02em; white-space: nowrap; display: flex; align-items: center; gap: 48px; }
+  .marquee span::after { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--volt); box-shadow: 0 0 calc(14px * var(--glow)) var(--volt); }
+  .marquee span:nth-child(3n+2) { color: var(--volt); }
+  @keyframes scroll { to { transform: translateX(-50%); } }
 
   /* ---------- sections ---------- */
-  section { max-width: 1180px; margin: 0 auto; padding: clamp(48px, 6vw, 90px) clamp(20px, 5vw, 64px); }
+  section { padding: 110px 0 0; position: relative; z-index: 1; }
+  .kicker { font: 700 12px var(--body); letter-spacing: .18em; text-transform: uppercase; color: var(--volt); }
+  h2 { font-family: var(--display); font-weight: 700; font-size: clamp(38px, 6vw, 72px); line-height: .95; letter-spacing: -0.04em; margin: 14px 0 18px; }
+  .section-lead { color: var(--dim); font-size: 18px; max-width: 38em; margin: 0 0 48px; }
 
-  .section-head { max-width: 640px; margin-bottom: 48px; }
-  .kicker {
-    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--sage-bright); margin-bottom: 12px;
-  }
-  h2 { font-family: var(--font-display); font-size: clamp(28px, 3.6vw, 42px); letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 14px; }
-  .section-head p { color: var(--text-dim); font-size: 16px; }
-
-  /* how it works */
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
   @media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
-  .step {
-    position: relative;
-    background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5);
-    border-radius: var(--radius); padding: 30px 26px;
-    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  .glass {
+    background: var(--glass); border: 1px solid var(--glass-stroke); border-radius: var(--radius);
+    padding: 30px; position: relative; overflow: hidden;
+    transition: border-color .3s, transform .3s cubic-bezier(.2,.8,.2,1);
   }
-  .step:hover { transform: translateY(-5px); border-color: var(--purple); box-shadow: 0 18px 44px -18px rgba(124, 92, 224, 0.45); }
-  .step .n {
-    font-family: var(--font-display); font-size: 15px; font-weight: 700;
-    width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
-    background: linear-gradient(135deg, var(--purple-bright), var(--purple));
-    color: #fff; margin-bottom: 18px; box-shadow: 0 8px 20px -6px rgba(124, 92, 224, 0.6);
-  }
-  .step h3 { font-family: var(--font-display); font-size: 19px; margin-bottom: 8px; }
-  .step p { color: var(--text-dim); font-size: 14.5px; }
+  .glass:hover { border-color: color-mix(in srgb, var(--volt) 55%, transparent); transform: translateY(-3px); }
+  .step .n { font: 700 64px/1 var(--display); letter-spacing: -0.05em; color: transparent; -webkit-text-stroke: 1.5px var(--volt); }
+  .glass h3 { font-family: var(--display); font-size: 24px; letter-spacing: -0.02em; margin: 18px 0 8px; }
+  .glass p { color: var(--dim); margin: 0; }
 
-  /* features */
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
-  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
-  .card {
-    background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5);
-    border-radius: var(--radius); padding: 28px 24px;
-    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-    position: relative; overflow: hidden;
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 960px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .feat .ic {
+    width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--volt) 14%, transparent); color: var(--volt);
   }
-  .card::before {
-    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
-    background: linear-gradient(90deg, var(--purple-bright), var(--sage));
-    opacity: 0; transition: opacity 0.25s ease;
-  }
-  .card:hover { transform: translateY(-5px); border-color: rgba(155, 123, 255, 0.6); box-shadow: 0 18px 44px -18px rgba(124, 92, 224, 0.4); }
-  .card:hover::before { opacity: 1; }
-  .card .icon {
-    width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center;
-    background: var(--surface-2); border: 1px solid var(--outline);
-    margin-bottom: 16px; color: var(--purple-bright);
-  }
-  .card .icon svg { width: 23px; height: 23px; }
-  .card h3 { font-family: var(--font-display); font-size: 17.5px; margin-bottom: 8px; }
-  .card p { color: var(--text-dim); font-size: 14px; }
-  .card .tag {
-    position: absolute; top: 20px; right: 20px;
-    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--sage-bright); background: rgba(157, 179, 138, 0.13);
-    border: 1px solid rgba(157, 179, 138, 0.35); padding: 3px 9px; border-radius: 999px;
-  }
+  .feat.hot .ic { background: color-mix(in srgb, var(--signal) 14%, transparent); color: var(--signal); }
+  .feat .ic svg { width: 26px; height: 26px; }
+  .feat .tag { position: absolute; top: 24px; right: 24px; font: 800 10px var(--body); letter-spacing: .14em; padding: 5px 10px; border-radius: 99px; background: var(--volt); color: var(--on-volt); }
+  .feat.wide { grid-column: span 2; }
+  @media (max-width: 620px) { .feat.wide { grid-column: auto; } }
 
-  /* download */
-  .download {
-    background: linear-gradient(160deg, var(--surface-2), var(--surface) 55%);
-    border: 1px solid var(--outline); border-radius: 28px;
-    padding: clamp(34px, 5vw, 60px);
-    text-align: center; position: relative; overflow: hidden;
-  }
-  .download::before {
-    content: ""; position: absolute; inset: -40% -20% auto;
-    height: 90%; background: radial-gradient(60% 50% at 50% 0%, rgba(124, 92, 224, 0.28), transparent 70%);
-    pointer-events: none;
-  }
-  .download > * { position: relative; }
-  .download h2 { font-size: clamp(28px, 3.4vw, 40px); }
-  .download .sub { color: var(--text-dim); max-width: 560px; margin: 0 auto 30px; }
-  .variant-picker { display: inline-flex; gap: 6px; background: var(--bg); border: 1px solid var(--outline); border-radius: 13px; padding: 5px; margin-bottom: 26px; flex-wrap: wrap; justify-content: center; }
-  .variant-picker button {
-    font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer;
-    color: var(--text-dim); background: transparent; border: none; border-radius: 9px;
-    padding: 9px 14px; transition: all 0.2s ease;
-  }
-  .variant-picker button:hover { color: var(--text); }
-  .variant-picker button.active { background: var(--purple); color: #fff; box-shadow: 0 6px 16px -6px rgba(124, 92, 224, 0.7); }
-  .dl-note { color: var(--text-faint); font-size: 13px; margin-top: 16px; }
-  .dl-note a { color: var(--sage-bright); }
-  .reqs {
-    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 30px;
-  }
-  .req {
-    display: inline-flex; align-items: center; gap: 7px;
-    background: var(--bg); border: 1px solid var(--outline); border-radius: 999px;
-    padding: 8px 15px; font-size: 13px; color: var(--text-dim);
-  }
-  .req svg { width: 15px; height: 15px; color: var(--sage-bright); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 18px; }
+  @media (max-width: 860px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat .num { font: 700 clamp(40px, 5vw, 60px)/1 var(--display); letter-spacing: -0.04em; color: var(--volt); }
+  .stat .lbl { color: var(--dim); margin-top: 8px; font-weight: 500; }
 
-  /* web app */
-  .web-cmd {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 13.5px;
-    background: var(--bg); border: 1px solid var(--outline); border-radius: 11px;
-    padding: 10px 15px; color: var(--purple-bright); margin-top: 18px;
+  /* ---------- download ---------- */
+  .cta-card {
+    border-radius: 40px; padding: clamp(32px, 6vw, 72px);
+    border: 1.5px solid color-mix(in srgb, var(--volt) 55%, transparent);
+    background:
+      radial-gradient(80% 120% at 100% 0%, color-mix(in srgb, var(--volt) calc(16% * var(--glow) + 4%), transparent), transparent 60%),
+      var(--glass);
   }
-  .web-note {
-    max-width: 640px; margin: 22px auto 0; text-align: left;
-    background: rgba(157, 179, 138, 0.07); border: 1px solid rgba(157, 179, 138, 0.25);
-    border-radius: 16px; padding: 16px 20px; font-size: 13.5px; color: var(--text-dim);
+  .seg { display: inline-flex; flex-wrap: wrap; gap: 6px; padding: 6px; border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-stroke); margin: 8px 0 26px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--dim); font: 600 14px var(--body);
+    padding: 11px 18px; border-radius: 999px; cursor: pointer; transition: background .2s, color .2s;
   }
-  .web-note b, .web-note code { color: var(--sage-bright); }
-  .web-note code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .seg button.active { background: var(--volt); color: var(--on-volt); }
+  .note { color: var(--dim); font-size: 14.5px; margin: 18px 0 0; }
+  .note b { color: var(--text); }
+  .reqs { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
+  .req { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 99px; border: 1px solid var(--glass-stroke); font-size: 13.5px; font-weight: 600; }
+  .req svg { width: 16px; height: 16px; color: var(--volt); }
+  .code { font-family: var(--mono); font-size: .92em; padding: 2px 8px; border-radius: 8px; background: var(--glass); border: 1px solid var(--glass-stroke); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
 
-  /* faq */
-  .faq { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px 26px; }
-  @media (max-width: 760px) { .faq { grid-template-columns: 1fr; } }
-  .faq details { background: var(--surface); border: 1px solid rgba(71, 58, 99, 0.5); border-radius: 16px; padding: 18px 20px; transition: border-color 0.2s; }
-  .faq details:hover { border-color: var(--outline); }
-  .faq summary { cursor: pointer; font-family: var(--font-display); font-weight: 600; font-size: 15.5px; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  .faq summary::-webkit-details-marker { display: none; }
-  .faq summary::after { content: "+"; font-size: 20px; color: var(--purple-bright); transition: transform 0.2s; }
-  .faq details[open] summary::after { transform: rotate(45deg); }
-  .faq details p { color: var(--text-dim); font-size: 14px; margin-top: 10px; }
+  /* ---------- faq ---------- */
+  .faq { display: grid; gap: 12px; max-width: 860px; }
+  details { border-radius: 22px; border: 1px solid var(--glass-stroke); background: var(--glass); padding: 0 24px; transition: border-color .3s; }
+  details[open] { border-color: color-mix(in srgb, var(--volt) 50%, transparent); }
+  summary { cursor: pointer; list-style: none; padding: 22px 0; font-weight: 600; font-size: 17px; display: flex; justify-content: space-between; gap: 16px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; font: 500 26px/1 var(--display); color: var(--volt); transition: transform .3s; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details p { margin: 0 0 22px; color: var(--dim); }
 
-  /* footer */
-  footer {
-    border-top: 1px solid rgba(71, 58, 99, 0.4);
-    padding: 38px clamp(20px, 5vw, 64px);
-    max-width: 1180px; margin: 0 auto;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-    color: var(--text-faint); font-size: 13.5px;
-  }
-  footer .brand svg { width: 26px; height: 26px; border-radius: 7px; }
-  footer a { color: var(--text-dim); text-decoration: none; transition: color 0.2s; }
-  footer a:hover { color: var(--purple-bright); }
+  footer { margin-top: 120px; border-top: 1px solid var(--glass-stroke); position: relative; z-index: 1; }
+  footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 30px 24px 40px; color: var(--dim); font-size: 14px; }
+  footer a { text-decoration: none; font-weight: 600; color: var(--text); }
+  footer a:hover { color: var(--volt); }
 
-  /* reveal on scroll */
-  .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s cubic-bezier(.2,.8,.2,1), transform .7s cubic-bezier(.2,.8,.2,1); }
   .reveal.visible { opacity: 1; transform: none; }
 
   @media (prefers-reduced-motion: reduce) {
-    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
     .reveal { opacity: 1; transform: none; }
+    html { scroll-behavior: auto; }
   }
 </style>
 </head>
 <body>
-<div class="backdrop"></div>
+<div class="bloom"></div>
 
 <nav>
-  <div class="brand">
-    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="ng" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9B7BFF"/><stop offset="1" stop-color="#9DB38A"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#ng)"/><g fill="#fff"><rect x="14" y="24" width="5.6" height="16" rx="2.8"/><rect x="23" y="16" width="5.6" height="32" rx="2.8"/><rect x="32" y="10" width="5.6" height="44" rx="2.8"/><rect x="41" y="20" width="5.6" height="24" rx="2.8"/><rect x="50" y="27" width="5.6" height="10" rx="2.8"/></g></svg>
-    Ampme
-  </div>
-  <div class="links">
-    <a href="#how">How it works</a>
-    <a href="#features">Features</a>
-    <a href="#web">Web app</a>
-    <a href="#faq">FAQ</a>
-    <a class="btn btn-primary" href="#download">Download APK</a>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="19" fill="#D4FF3A"/><g fill="#0B0B0F"><rect x="15" y="25.5" width="5" height="13" rx="2.5"/><rect x="23" y="19.5" width="5" height="25" rx="2.5"/><rect x="31" y="16" width="5" height="32" rx="2.5"/><rect x="39" y="22" width="5" height="20" rx="2.5"/><rect x="47" y="26.5" width="5" height="11" rx="2.5"/></g></svg>
+      AMPME
+    </a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#web">Web app</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn btn-primary" href="#download">Download</a>
+    </div>
   </div>
 </nav>
 
 <header>
-  <div class="col">
-    <span class="pill"><span class="dot"></span> Now on Android</span>
-    <h1>Every phone in the room,<br><span class="grad">playing the same beat.</span></h1>
-    <p class="lead">Play audio on one device — every phone on the same WiFi plays it back in perfect sync. No cables, no cloud, no account. Your music, your friends, one speaker-everywhere.</p>
-    <div class="cta-row">
-      <a class="btn btn-primary btn-lg" href="#download">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-        Download APK
-      </a>
-      <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
-    </div>
-    <p class="meta-note"><b>Free</b> · <b>Android 10+</b> · <b>37 MB</b> · open source</p>
-
-    <div class="stat-row">
-      <div class="stat"><div class="num">0</div><div class="lbl">Cloud servers</div></div>
-      <div class="stat"><div class="num">~30&thinsp;ms</div><div class="lbl">Drift correction</div></div>
-      <div class="stat"><div class="num">1</div><div class="lbl">Tap to host</div></div>
-      <div class="stat"><div class="num">100%</div><div class="lbl">On your WiFi</div></div>
-    </div>
-  </div>
-
-  <div class="col phone-wrap">
-    <div class="phone">
-      <div class="screen">
-        <div class="notch"></div>
-        <div class="appbar">Join a session</div>
-        <div class="sub">Nearby sessions on your network</div>
-        <div class="card">
-          <div class="row"><span class="name">🎧 Living room party</span><span class="sync-badge"><span class="dot"></span>in sync</span></div>
-          <div class="addr">192.168.1.42:54213</div>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <span class="pill"><span class="dot"></span> Android + web · free</span>
+        <h1><span class="nw">ONE ROOM.</span><br><span class="v nw">ONE BEAT.</span></h1>
+        <p class="lead">Every phone in the room plays the same song at the same instant — one giant speaker, no cables. Songs, videos and even a YouTube tab, all in step.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="#download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Get the Android app
+          </a>
+          <a class="btn btn-ghost btn-lg" href="web/">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18"/><path d="M12 3a15 15 0 0 0 0 18"/></svg>
+            Open the web app
+          </a>
         </div>
-        <div class="card">
-          <div class="row"><span class="name">🌙 Late-night vibes</span><span class="sync-badge"><span class="dot"></span>in sync</span></div>
-          <div class="addr">192.168.1.53:54213</div>
-        </div>
-        <div class="codebox"><span class="tag">or enter a code</span><span>192.168.1.42:54213</span></div>
-        <div class="eq">
-          <div class="eq-bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-          <div class="label">playing in sync</div>
+        <p class="meta"><b>Free</b> · <b>No account</b> · <b>Open source</b> · join with a code, link or QR</p>
+      </div>
+
+      <div aria-hidden="true">
+        <div class="phone">
+          <div class="screen">
+            <div class="notch"></div>
+            <span class="pill s-pill"><span class="dot"></span> In sync</span>
+            <h4>Rooftop</h4>
+            <div class="sub">You’re a speaker in this room.</div>
+            <div class="now">
+              <div class="mini-eq">
+                <span style="animation-delay:-.1s"></span><span style="animation-delay:-.5s"></span><span style="animation-delay:-.3s"></span><span style="animation-delay:-.8s"></span><span style="animation-delay:-.2s"></span><span style="animation-delay:-.6s"></span><span style="animation-delay:-.4s"></span><span style="animation-delay:-.9s"></span><span style="animation-delay:-.15s"></span><span style="animation-delay:-.7s"></span><span style="animation-delay:-.35s"></span><span style="animation-delay:-.55s"></span>
+              </div>
+              <div class="k">NOW PLAYING</div>
+              <div class="t">Midnight City</div>
+              <div class="track"><i></i></div>
+              <div class="times"><span>1:42</span><span>4:03</span></div>
+            </div>
+            <div class="dev">
+              <div class="av"><svg viewBox="0 0 24 24" fill="#0B0B0F"><rect x="4" y="10" width="3" height="8" rx="1.5"/><rect x="10.5" y="5" width="3" height="13" rx="1.5"/><rect x="17" y="8" width="3" height="10" rx="1.5"/></svg></div>
+              <div><div class="n">Maya’s Pixel</div><div class="st">In sync (+4 ms)</div></div>
+              <div class="ring"><b>+4</b></div>
+            </div>
+            <div class="dev">
+              <div class="av"><svg viewBox="0 0 24 24" fill="#0B0B0F"><rect x="4" y="10" width="3" height="8" rx="1.5"/><rect x="10.5" y="5" width="3" height="13" rx="1.5"/><rect x="17" y="8" width="3" height="10" rx="1.5"/></svg></div>
+              <div><div class="n">Living-room laptop</div><div class="st">In sync (−7 ms)</div></div>
+              <div class="ring"><b>−7</b></div>
+            </div>
+            <div class="dev">
+              <div class="av"><svg viewBox="0 0 24 24" fill="#0B0B0F"><rect x="4" y="10" width="3" height="8" rx="1.5"/><rect x="10.5" y="5" width="3" height="13" rx="1.5"/><rect x="17" y="8" width="3" height="10" rx="1.5"/></svg></div>
+              <div><div class="n">Sam’s Galaxy</div><div class="st">In sync (+11 ms)</div></div>
+              <div class="ring"><b>+11</b></div>
+            </div>
+            <div class="invite"><small>AMP</small><i>7</i><i>K</i><i>Q</i><i>4</i><i>Z</i><i>D</i></div>
+          </div>
         </div>
       </div>
     </div>
+    <canvas id="eq" aria-hidden="true"></canvas>
   </div>
 </header>
 
-<section id="how">
-  <div class="section-head reveal">
-    <div class="kicker">How it works</div>
-    <h2>Sync without the cloud</h2>
-    <p>Ampme turns one phone into a tiny local media server. The rest is timing — the good kind.</p>
+<div class="marquee" aria-hidden="true">
+  <div class="row">
+    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>±20 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
+    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>±20 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
   </div>
-  <div class="steps">
-    <div class="step reveal">
-      <div class="n">1</div>
-      <h3>Host a session</h3>
-      <p>Pick a song — or broadcast any audio your phone is playing, from any app. Your device serves the audio straight over your WiFi.</p>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="reveal">
+      <div class="kicker">How it works</div>
+      <h2>Three taps to a<br>wall of sound.</h2>
+      <p class="section-lead">Each device gets its own copy and they all press play at the same planned instant — then keep correcting, every second.</p>
     </div>
-    <div class="step reveal">
-      <div class="n">2</div>
-      <h3>Friends join</h3>
-      <p>Sessions appear automatically on nearby phones, or join by code / QR. A control channel links every listener to the host.</p>
-    </div>
-    <div class="step reveal">
-      <div class="n">3</div>
-      <h3>Stay perfectly in sync</h3>
-      <p>An NTP-style clock sync estimates the offset between devices. Playback fires from a precise timer — and a ~30&thinsp;ms drift correction keeps it locked, song after song.</p>
+    <div class="steps">
+      <div class="glass step reveal">
+        <div class="n">01</div>
+        <h3>Host</h3>
+        <p>Start a session on a phone or in a browser and pick a song, a video, or a browser tab to share.</p>
+      </div>
+      <div class="glass step reveal">
+        <div class="n">02</div>
+        <h3>Invite</h3>
+        <p>Friends scan the QR, open the link, or type the <span class="code">AMP-XXXXXX</span> code. Phones on the same WiFi find you on their own.</p>
+      </div>
+      <div class="glass step reveal">
+        <div class="n">03</div>
+        <h3>Drop the beat</h3>
+        <p>Clocks are synced NTP-style, playback starts on a shared timeline, and drift correction keeps everyone within a few milliseconds.</p>
+      </div>
     </div>
   </div>
 </section>
 
 <section id="features">
-  <div class="section-head reveal">
-    <div class="kicker">Features</div>
-    <h2>Built for real listening rooms</h2>
-    <p>Everything runs on your local network. Nothing is uploaded, logged, or monetized.</p>
-  </div>
-  <div class="grid">
-    <div class="card reveal">
-      <span class="tag">New</span>
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M7 10v4"/><path d="M12 8v8"/><path d="M17 11v2"/></svg></div>
-      <h3>Broadcast device audio</h3>
-      <p>Whatever your phone is playing — Spotify, YouTube, a game, a video — gets streamed to every listener. No file selection needed.</p>
+  <div class="wrap">
+    <div class="reveal">
+      <div class="kicker">Features</div>
+      <h2>Built for real rooms.</h2>
+      <p class="section-lead">Parties, classrooms, rooftops, road trips. Audio travels device-to-device; nothing is uploaded or stored.</p>
     </div>
-    <div class="card reveal">
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg></div>
-      <h3>Amplify the room</h3>
-      <p>Broadcast your microphone live — lectures, singalongs, commentary — on every platform, instantly.</p>
+    <div class="grid">
+      <div class="glass feat wide reveal">
+        <span class="tag">NEW</span>
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="m10 9 5 3-5 3Z"/></svg></div>
+        <h3>Videos: picture here, sound everywhere</h3>
+        <p>Pick a video on the host — from the browser or the Android app. The host shows the picture; every other device plays its sound, in sync. Phones only receive the audio, so even long films start fast.</p>
+      </div>
+      <div class="glass feat hot reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/><path d="M7 6.5h.01"/></svg></div>
+        <h3>Share a browser tab</h3>
+        <p>YouTube, Spotify Web, anything in Chrome or Edge — every device plays it together, a second behind the tab.</p>
+      </div>
+      <div class="glass feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+        <h3>Millisecond sync</h3>
+        <p>A scheduled start plus continuous drift correction. The host sees every speaker’s offset live.</p>
+      </div>
+      <div class="glass feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 7v6"/><path d="M14 9v4"/></svg></div>
+        <h3>Broadcast device audio</h3>
+        <p>On Android 10+, stream whatever any app is playing — or your microphone, to amplify the room.</p>
+      </div>
+      <div class="glass feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M20 20h.01M17 20h.01"/></svg></div>
+        <h3>Code, link or QR</h3>
+        <p>Join from the app or any browser in seconds. No accounts, no sign-up, no tracking.</p>
+      </div>
     </div>
-    <div class="card reveal">
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
-      <h3>Tight sync, all night</h3>
-      <p>Clock-offset estimation plus continuous drift correction keep phones within ~30&thinsp;ms of each other — inaudible, even on beats.</p>
-    </div>
-    <div class="card reveal">
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg></div>
-      <h3>No cloud, no account</h3>
-      <p>Audio never leaves your WiFi. Private by design — there's no server to trust, no sign-up, no tracking.</p>
-    </div>
-    <div class="card reveal">
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a7 7 0 0 1 14 0"/><path d="M8 12.5a3.5 3.5 0 0 1 8 0"/><circle cx="12" cy="17" r="1.5"/></svg></div>
-      <h3>Auto-discovery</h3>
-      <p>Nearby sessions show up on their own via UDP beacon. Join with one tap — no typing IP addresses.</p>
-    </div>
-    <div class="card reveal">
-      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
-      <h3>Join by code or QR</h3>
-      <p>Type the host's code or point your camera at the QR — connected in seconds, even when discovery can't reach.</p>
+    <div class="stats">
+      <div class="glass stat reveal"><div class="num">±20<small style="font-size:.45em"> ms</small></div><div class="lbl">typical drift between devices</div></div>
+      <div class="glass stat reveal"><div class="num">0</div><div class="lbl">accounts or sign-ups</div></div>
+      <div class="glass stat reveal"><div class="num">3</div><div class="lbl">ways to join: code, link, QR</div></div>
+      <div class="glass stat reveal"><div class="num">∞</div><div class="lbl">speakers, one beat</div></div>
     </div>
   </div>
 </section>
 
 <section id="download">
-  <div class="download reveal">
-    <div class="kicker">Get it</div>
-    <h2>Download Ampme for Android</h2>
-    <p class="sub">Side-loadable APK — no Play Store required. Pick the build for your phone, install, and start the party.</p>
+  <div class="wrap">
+    <div class="cta-card reveal">
+      <div class="kicker">Get it</div>
+      <h2>Ampme for Android.</h2>
+      <p class="section-lead" style="margin-bottom:12px">A side-loadable APK, no Play Store needed. Pick your build, install, and start the party.</p>
 
-    <div class="variant-picker" id="variantPicker" role="group" aria-label="APK variant">
-      <button class="active" data-variant="arm64">Most phones · 37 MB</button>
-      <button data-variant="armv7">Older phones · 28 MB</button>
-      <button data-variant="universal">Universal · 102 MB</button>
-    </div>
+      <div class="seg" id="variantPicker" role="group" aria-label="APK variant">
+        <button class="active" data-variant="arm64">Most phones · ~40 MB</button>
+        <button data-variant="armv7">Older phones · ~30 MB</button>
+        <button data-variant="universal">Universal · ~105 MB</button>
+      </div>
 
-    <div>
-      <a id="downloadBtn" class="btn btn-primary btn-lg" href="#">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-        Download <span id="dlLabel">arm64 APK</span>
-      </a>
-    </div>
-    <p class="dl-note">Running Android 10 or newer on a 64-bit phone? <b>Most phones · 37 MB</b> is the one. Unsure? Grab the <a href="#" id="universalLink">universal build</a> — it works on everything.</p>
+      <div>
+        <a id="downloadBtn" class="btn btn-primary btn-lg" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Download <span id="dlLabel">arm64 APK</span>
+        </a>
+      </div>
+      <p class="note">A 64-bit phone from the last few years? <b>Most phones</b> is the one. Unsure? Grab the <a href="#" id="universalLink">universal build</a> — it works on everything.</p>
 
-    <div class="reqs">
-      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Android 10+</span>
-      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Same WiFi network</span>
-      <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Free forever</span>
+      <div class="reqs">
+        <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Android 10+ recommended</span>
+        <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Free forever</span>
+        <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Open source</span>
+      </div>
     </div>
   </div>
 </section>
 
 <section id="web">
-  <div class="download reveal">
-    <div class="kicker">Web app</div>
-    <h2>Try Ampme in your browser</h2>
-    <p class="sub">Host a session right in your browser — WebRTC streaming, 30–80&thinsp;ms on a LAN — and friends join with a code, a link, or by scanning the QR code. No install; works on Windows, Mac, Chromebook, and phones.</p>
-    <div>
-      <a class="btn btn-primary btn-lg" href="web/">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18"/><path d="M12 3a15 15 0 0 0 0 18"/></svg>
-        Open the web app
-      </a>
+  <div class="wrap">
+    <div class="reveal">
+      <div class="kicker">Web app</div>
+      <h2>No install? No problem.</h2>
+      <p class="section-lead">Host or join right in the browser — on Windows, Mac, Chromebook or a phone. Sound streams device-to-device; only the connection handshake goes through the internet.</p>
     </div>
-    <p class="dl-note">Open it, tap <b>Host a Session</b>, pick a song, and share the <b>AMP-XXXXXX</b> code. Audio flows device-to-device; only the connection handshake goes through the internet.</p>
-    <div class="web-note">No internet at the party? Run <b>dart run tool/web_relay.dart</b> on any computer on the WiFi, open the <b>http://&lt;lan-ip&gt;:8080/web/</b> address it prints, and pick <b>Advanced: use a LAN relay</b> when hosting.</div>
+    <div class="two">
+      <div class="glass reveal">
+        <h3 style="margin-top:0">Open it, host, share the code</h3>
+        <p>Tap <b>Host a Session</b>, pick a song, video or tab, and share the <span class="code">AMP-XXXXXX</span> code, link or QR.</p>
+        <div style="margin-top:24px"><a class="btn btn-primary btn-lg" href="web/">Open the web app →</a></div>
+      </div>
+      <div class="glass reveal">
+        <h3 style="margin-top:0">No internet at the party?</h3>
+        <p>Run <span class="code">dart run tool/web_relay.dart</span> on any computer on the WiFi, open the <span class="code">http://&lt;lan-ip&gt;:8080/web/</span> address it prints, and pick <b>Advanced: use a LAN relay</b> when hosting.</p>
+      </div>
+    </div>
   </div>
 </section>
 
 <section id="faq">
-  <div class="section-head reveal">
-    <div class="kicker">FAQ</div>
-    <h2>Questions, answered</h2>
-  </div>
-  <div class="faq">
-    <details class="reveal" open>
-      <summary>Why can't I find it on the Play Store?</summary>
-      <p>Ampme is a from-scratch side project, distributed directly as an APK for now. That keeps it free and lets you install it in seconds — just allow "install unknown apps" for your browser or file manager when Android asks.</p>
-    </details>
-    <details class="reveal">
-      <summary>Does everyone need the app?</summary>
-      <p>Yes — each phone runs Ampme and joins the host's session. The host broadcasts over WiFi; listeners just need the app (and the host's code, or auto-discovery finds them).</p>
-    </details>
-    <details class="reveal">
-      <summary>Does it work over the internet?</summary>
-      <p>Phone-hosted sessions are local-network only — all devices on the same WiFi (or one phone's hotspot); that's what makes their sample-tight sync possible with zero cloud. Sessions hosted from the <a href="web/">web app</a> connect through a lightweight internet handshake, so listeners can join from anywhere with the code — the audio itself still streams device-to-device.</p>
-    </details>
-    <details class="reveal">
-      <summary>Why "Android 10+" for device audio?</summary>
-      <p>Broadcasting what your phone is playing uses Android's MediaProjection capture API (introduced in Android 10). Older Android versions can still host file-based and microphone sessions.</p>
-    </details>
-    <details class="reveal">
-      <summary>Can I broadcast Spotify?</summary>
-      <p>Mostly yes — but some apps (Spotify among them) can opt out of audio playback capture, in which case you'll capture silence. DRM-protected streams are always excluded. File playback and the microphone work with everything.</p>
-    </details>
-    <details class="reveal">
-      <summary>What about Windows, macOS, or web?</summary>
-      <p>The app also runs on Windows (host or listener) and in the browser (join, or host via WebRTC). iOS can join too when available. This page ships the Android build plus a hosted web preview — the same release contains everything else.</p>
-    </details>
+  <div class="wrap">
+    <div class="reveal">
+      <div class="kicker">FAQ</div>
+      <h2>Questions, answered.</h2>
+    </div>
+    <div class="faq">
+      <details class="reveal" open>
+        <summary>Does everyone need the app?</summary>
+        <p>No. Listeners can join from the Android app or straight from a browser with the code, link or QR. Phones on the same WiFi as an Android host also find it automatically.</p>
+      </details>
+      <details class="reveal">
+        <summary>Does it work over the internet?</summary>
+        <p>Sessions hosted from the <a href="web/">web app</a> connect through a light internet handshake, so people can join from anywhere; the audio itself still streams device-to-device. Sessions hosted from the Android app run on the local network (same WiFi or a phone hotspot).</p>
+      </details>
+      <details class="reveal">
+        <summary>How do videos work?</summary>
+        <p>The host shows the picture and every other device plays the sound in sync. Only the sound is sent to the phones, so they don’t download or decode a picture nobody sees.</p>
+      </details>
+      <details class="reveal">
+        <summary>Can I play YouTube or Spotify?</summary>
+        <p>From the web app on a computer (Chrome or Edge), share the tab and every device plays it, about a second behind the tab. On Android 10+, “Broadcast device audio” streams other apps — though some apps (Spotify among them) block capture, and DRM streams are always excluded.</p>
+      </details>
+      <details class="reveal">
+        <summary>Why isn’t it on the Play Store?</summary>
+        <p>Ampme is an independent side project, distributed directly as an APK for now. Allow “install unknown apps” for your browser or file manager when Android asks.</p>
+      </details>
+    </div>
   </div>
 </section>
 
 <footer>
-  <div class="brand">
-    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="fg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9B7BFF"/><stop offset="1" stop-color="#9DB38A"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#fg)"/><g fill="#fff"><rect x="14" y="24" width="5.6" height="16" rx="2.8"/><rect x="23" y="16" width="5.6" height="32" rx="2.8"/><rect x="32" y="10" width="5.6" height="44" rx="2.8"/><rect x="41" y="20" width="5.6" height="24" rx="2.8"/><rect x="50" y="27" width="5.6" height="10" rx="2.8"/></g></svg>
-    Ampme
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="19" fill="#D4FF3A"/><g fill="#0B0B0F"><rect x="15" y="25.5" width="5" height="13" rx="2.5"/><rect x="23" y="19.5" width="5" height="25" rx="2.5"/><rect x="31" y="16" width="5" height="32" rx="2.5"/><rect x="39" y="22" width="5" height="20" rx="2.5"/><rect x="47" y="26.5" width="5" height="11" rx="2.5"/></g></svg>
+      AMPME
+    </a>
+    <span>Open source · built with Flutter · <span id="year"></span></span>
+    <a href="#" id="githubLink">Source on GitHub ↗</a>
   </div>
-  <span>Open source · built with Flutter · <span id="year"></span></span>
-  <a href="#" id="githubLink">Source on GitHub ↗</a>
 </footer>
 
 <script>
 /* ================================================================
-   CONFIG — edit these two lines, then push to GitHub. That's it.
-   ----------------------------------------------------------------
-   GITHUB_USER : your GitHub username (the part before github.io)
-   GITHUB_REPO : the repository name that hosts this page
+   CONFIG — the GitHub repo the release APKs are attached to.
    ================================================================ */
 const GITHUB_USER = "Mattathiasa";
 const GITHUB_REPO = "ampme";
@@ -591,57 +534,106 @@ const REPO = `https://github.com/${GITHUB_USER}/${GITHUB_REPO}`;
 const REL = `${REPO}/releases/latest/download`;
 
 const VARIANTS = {
-  // asset filenames must match what you attach to the GitHub Release
-  arm64:     { file: "ampme-arm64-v8a.apk",     label: "arm64 APK",     size: "37 MB"  },
-  armv7:     { file: "ampme-armeabi-v7a.apk",   label: "armeabi-v7a APK", size: "28 MB" },
-  universal: { file: "ampme.apk",               label: "universal APK",  size: "102 MB" },
+  // Asset file names must match what CI attaches to the GitHub Release.
+  arm64:     { file: "ampme-arm64-v8a.apk",   label: "arm64 APK" },
+  armv7:     { file: "ampme-armeabi-v7a.apk", label: "armeabi-v7a APK" },
+  universal: { file: "ampme.apk",             label: "universal APK" },
 };
 
-function currentVariant() {
-  const active = document.querySelector("#variantPicker button.active");
-  return active ? active.dataset.variant : "arm64";
-}
-
-function refreshDownload() {
-  const v = VARIANTS[currentVariant()];
-  const btn = document.getElementById("downloadBtn");
-  btn.href = `${REL}/${v.file}`;
+const picker = document.querySelectorAll("#variantPicker button");
+function select(variant) {
+  picker.forEach((b) => b.classList.toggle("active", b.dataset.variant === variant));
+  const v = VARIANTS[variant];
+  document.getElementById("downloadBtn").href = `${REL}/${v.file}`;
   document.getElementById("dlLabel").textContent = v.label;
 }
-
-document.querySelectorAll("#variantPicker button").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll("#variantPicker button").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    refreshDownload();
-  });
+picker.forEach((btn) => btn.addEventListener("click", () => select(btn.dataset.variant)));
+document.getElementById("universalLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  select("universal");
 });
+select("arm64");
 
-document.getElementById("universalLink").addEventListener("click", () => {
-  document.querySelectorAll("#variantPicker button").forEach((b) => b.classList.toggle("active", b.dataset.variant === "universal"));
-  refreshDownload();
-});
-
-// If the page is served from GitHub Pages we can also derive the repo link
-// automatically; otherwise fall back to the configured repo.
+// On GitHub Pages, link the repo this page is served from.
 const githubLink = document.getElementById("githubLink");
-const canonical = document.querySelector('meta[property="og:url"]');
-if (location.hostname.endsWith("github.io") && !location.hostname.startsWith("YOUR_USERNAME")) {
-  const [user, repo] = [location.hostname.split(".")[0], location.pathname.split("/")[1] || GITHUB_REPO];
+if (location.hostname.endsWith("github.io")) {
+  const user = location.hostname.split(".")[0];
+  const repo = location.pathname.split("/")[1] || GITHUB_REPO;
   githubLink.href = `https://github.com/${user}/${repo}`;
 } else {
   githubLink.href = REPO;
 }
-
 document.getElementById("year").textContent = new Date().getFullYear();
 
-// reveal on scroll
+// Reveal on scroll.
 const io = new IntersectionObserver((entries) => {
   entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); } });
 }, { threshold: 0.12 });
 document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
 
-refreshDownload();
+// Hero visualizer: the same beat-like pattern as the app's idle bars.
+(() => {
+  const canvas = document.getElementById("eq");
+  const ctx = canvas.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const css = getComputedStyle(document.documentElement);
+  let volt = css.getPropertyValue("--volt").trim();
+  let signal = css.getPropertyValue("--signal").trim();
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    const c = getComputedStyle(document.documentElement);
+    volt = c.getPropertyValue("--volt").trim();
+    signal = c.getPropertyValue("--signal").trim();
+  });
+  let levels = [];
+  let visible = true;
+  new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(canvas);
+
+  function size() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const n = Math.max(24, Math.min(72, Math.floor(canvas.clientWidth / 16)));
+    if (levels.length !== n) levels = Array(n).fill(0.1);
+  }
+  addEventListener("resize", size);
+  size();
+
+  function target(t, i, n) {
+    const x = i / (n - 1);
+    const beat = (t % 0.468) / 0.468;
+    const kick = Math.exp(-beat * 5) * (1 - Math.abs(x - 0.5) * 1.6) * 0.7;
+    const body = 0.5 + 0.5 * Math.sin(t * 2.1 + i * 0.9) * Math.cos(t * 0.7 + i * 0.31);
+    const shimmer = 0.5 + 0.5 * Math.sin(t * 7.3 + i * 2.17);
+    return Math.min(1, Math.max(0.06, 0.1 + kick + body * 0.42 + shimmer * 0.12));
+  }
+
+  function draw(now) {
+    const t = now / 1000;
+    const w = canvas.clientWidth, h = canvas.clientHeight, n = levels.length;
+    const gap = (w / n) * 0.34, bw = (w - gap * (n - 1)) / n;
+    ctx.clearRect(0, 0, w, h);
+    const grad = ctx.createLinearGradient(0, h, 0, 0);
+    grad.addColorStop(0, volt); grad.addColorStop(0.62, volt); grad.addColorStop(1, signal);
+    ctx.fillStyle = grad;
+    for (let i = 0; i < n; i++) {
+      const tg = reduce ? 0.12 + 0.3 * Math.abs(Math.sin(i * 0.7)) : target(t, i, n);
+      levels[i] += (tg - levels[i]) * (tg > levels[i] ? 0.5 : 0.16);
+      const bh = Math.max(bw, h * levels[i]);
+      const x = i * (bw + gap), y = h - bh, r = bw / 2;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, y, bw, bh, r) : ctx.rect(x, y, bw, bh);
+      ctx.fill();
+    }
+  }
+
+  let last = 0;
+  function loop(now) {
+    if (visible && now - last > 33) { last = now; draw(now); }
+    if (!reduce) requestAnimationFrame(loop);
+  }
+  reduce ? draw(0) : requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>

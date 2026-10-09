@@ -128,9 +128,9 @@ async function stats(page) {
     await page.getByRole('button', { name: 'Host a Session' }).click();
     await waitForText(page, /Start Session/, 15000);
     await page.getByRole('button', { name: 'Start Session' }).click();
-    await waitForText(page, /Invite listeners|Couldn.t start/, 30000);
+    await waitForText(page, /Copy code|Couldn.t start/, 30000);
     const text = await semantics(page);
-    if (!/Invite listeners/.test(text)) throw new Error('Session did not start: ' + text);
+    if (!/Copy code/.test(text)) throw new Error('Session did not start: ' + text);
 
     await page.getByRole('button', { name: 'Copy code' }).click();
     await page.waitForTimeout(300);
@@ -146,7 +146,7 @@ async function stats(page) {
       result.listenerSeen = true;
       await page.mouse.move(5, 880);
       await page.getByRole('button', { name: /Share a browser tab/ }).click({ force: true });
-      await waitForText(page, /Live: sharing tab audio/, 30000);
+      await waitForText(page, /Live tab audio/i, 30000);
       result.songDelivered = true;
       log('sharing the (synthetic) tab');
     } else {

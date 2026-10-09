@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -213,6 +214,11 @@ class WebHostController extends ChangeNotifier {
   web.AudioBufferSourceNode? _source;
   web.GainNode? _gain;
 
+  // ---- Visualizer ----
+  web.AnalyserNode? _analyser;
+  JSUint8Array? _bins;
+  List<double> _bands = const [];
+
   /// The running source plays song position [_anchorOffsetMs] at context
   /// time [_anchorCtxTime] (seconds), shifted by [_anchorSpeakerOffsetMs].
   double _anchorCtxTime = 0;
@@ -240,6 +246,45 @@ class WebHostController extends ChangeNotifier {
   bool _disposed = false;
 
   bool get isRunning => sessionCode.isNotEmpty;
+
+  /// What this browser is playing right now as [bands] levels in 0..1
+  /// (log-spaced, bass first) — the host visualizer's input. Null until
+  /// audio has been set up.
+  List<double>? spectrum(int bands) {
+    final ctx = _ctx;
+    final gain = _gain;
+    if (ctx == null || gain == null) return null;
+    var analyser = _analyser;
+    var bins = _bins;
+    if (analyser == null || bins == null) {
+      analyser = _analyser = ctx.createAnalyser()
+        ..fftSize = 1024
+        ..smoothingTimeConstant = 0.7;
+      // An analyser only runs while the graph pulls it, so route it to the
+      // destination through a muted gain (the sound itself is unaffected).
+      final mute = ctx.createGain()..gain.value = 0;
+      gain.connect(analyser);
+      analyser.connect(mute);
+      mute.connect(ctx.destination);
+      bins = _bins = Uint8List(analyser.frequencyBinCount).toJS;
+    }
+    analyser.getByteFrequencyData(bins);
+    final data = bins.toDart;
+    // Up to ~11 kHz: above that there's little energy to show.
+    final usable = (data.length * 0.5).floor();
+    if (_bands.length != bands) _bands = List<double>.filled(bands, 0);
+    final out = _bands;
+    for (var i = 0; i < bands; i++) {
+      final lo = math.pow(usable, i / bands).floor().clamp(1, usable - 1);
+      final hi = math.max(lo + 1, math.pow(usable, (i + 1) / bands).floor()).clamp(lo + 1, usable);
+      var sum = 0;
+      for (var b = lo; b < hi; b++) {
+        sum += data[b];
+      }
+      out[i] = math.pow(sum / (hi - lo) / 255, 1.6).toDouble();
+    }
+    return out;
+  }
 
   /// Starts a session over [signaling]. Resolves once the signaling service
   /// accepted this page as the host; throws (leaving the controller idle) if
@@ -1270,6 +1315,8 @@ class WebHostController extends ChangeNotifier {
     final ctx = _ctx;
     _ctx = null;
     _gain = null;
+    _analyser = null;
+    _bins = null;
     _notify();
 
     await _teardownSignaling();

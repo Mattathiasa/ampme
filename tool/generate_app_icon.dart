@@ -1,6 +1,6 @@
 // Generates Ampme's launcher icon, adaptive-icon foreground, and splash
 // artwork programmatically so the assets stay in sync with the brand palette
-// (see lib/theme/app_theme.dart) and can be regenerated anytime:
+// (see lib/theme/amp_tokens.dart and lib/widgets/amp_logo.dart) and can be regenerated anytime:
 //
 //   dart run tool/generate_app_icon.dart
 //
@@ -19,71 +19,56 @@ import 'package:image/image.dart' as img;
 const int _iconSize = 1024;
 const int _splashSize = 1024;
 
-// Brand palette (matches AppTheme).
-const _purpleBright = (155, 123, 255); // #9B7BFF
-const _sage = (157, 179, 138); // #9DB38A
-const _bgTop = (42, 30, 74); // #2A1E4A
-const _bgBottom = (20, 15, 31); // #140F1F
+// Brand palette (matches AmpTokens.dark).
+final _volt = img.ColorRgba8(0xD4, 0xFF, 0x3A, 255); // #D4FF3A
+final _ink = img.ColorRgba8(0x0B, 0x0B, 0x0F, 255); // #0B0B0F
 
-// Equalizer-bar heights (fractions of the drawing-area height).
-const List<double> _heights = [0.42, 0.72, 1.0, 0.58, 0.85];
-const int _barCount = 5;
+// Equalizer-bar heights — the same as AmpLogo.bars.
+const List<double> _heights = [0.42, 0.78, 1.0, 0.62, 0.34];
 
-img.ColorRgba8 _lerp(
-  (int, int, int) a,
-  (int, int, int) b,
-  double t,
-) {
-  return img.ColorRgba8(
-    (a.$1 + (b.$1 - a.$1) * t).round(),
-    (a.$2 + (b.$2 - a.$2) * t).round(),
-    (a.$3 + (b.$3 - a.$3) * t).round(),
-    255,
+void _fill(img.Image image, img.Color color) =>
+    img.fillRect(image, x1: 0, y1: 0, x2: image.width, y2: image.height, color: color);
+
+/// A rounded square [size] wide centred at ([cx], [cy]).
+void _tile(img.Image image, double cx, double cy, double size, img.Color color) {
+  final h = size / 2;
+  img.fillRect(
+    image,
+    x1: (cx - h).round(),
+    y1: (cy - h).round(),
+    x2: (cx + h).round(),
+    y2: (cy + h).round(),
+    radius: (size * 0.3).round(),
+    color: color,
   );
 }
 
-/// Vertical brand gradient used behind the launcher icon.
-void _fillGradientBackground(img.Image image) {
-  for (var y = 0; y < image.height; y++) {
-    final t = y / (image.height - 1);
-    final color = _lerp(_bgTop, _bgBottom, t);
-    for (var x = 0; x < image.width; x++) {
-      image.setPixelRgba(x, y, color.r, color.g, color.b, color.a);
-    }
-  }
-}
-
-/// Draws the Ampme equalizer-waveform, centered at [cx] with its baseline at
-/// [baselineY], spanning [totalWidth] and up to [maxHeight] tall. Bar colour
-/// fades from brand purple to sage across the row (matching the AmpLogo).
-void _drawWaveform(
+/// Ampme's five pill-shaped equalizer bars, centred on ([cx], [cy]) and
+/// spanning [width] x [height] — the AmpLogo glyph.
+void _drawBars(
   img.Image image, {
   required double cx,
-  required double baselineY,
-  required double totalWidth,
-  required double maxHeight,
+  required double cy,
+  required double width,
+  required double height,
+  required img.Color color,
 }) {
-  final barWidth = totalWidth / (_barCount + (_barCount - 1) * 0.6);
-  final gap = barWidth * 0.6;
-  var x = cx - totalWidth / 2;
-  for (var i = 0; i < _barCount; i++) {
-    final h = maxHeight * _heights[i];
-    final t = _barCount == 1 ? 0.0 : i / (_barCount - 1);
-    final color = _lerp(_purpleBright, _sage, t);
-    final x1 = x.round();
-    final x2 = (x + barWidth).round();
-    final y1 = (baselineY - h).round();
-    final y2 = baselineY.round();
-    img.fillRect(image, x1: x1, y1: y1, x2: x2, y2: y2, color: color);
-    // Rounded cap so bars read as soft equalizer peaks, not harsh blocks.
-    img.fillCircle(
+  const n = 5;
+  final w = width / (n * 1.6 - 0.6);
+  final gap = w * 0.6;
+  var x = cx - width / 2;
+  for (var i = 0; i < n; i++) {
+    final h = height * _heights[i];
+    img.fillRect(
       image,
-      x: (x + barWidth / 2).round(),
-      y: y1,
-      radius: (barWidth / 2).round(),
+      x1: x.round(),
+      y1: (cy - h / 2).round(),
+      x2: (x + w).round(),
+      y2: (cy + h / 2).round(),
+      radius: (w / 2).round(),
       color: color,
     );
-    x += barWidth + gap;
+    x += w + gap;
   }
 }
 
@@ -95,38 +80,43 @@ void _writePng(img.Image image, String path) {
 }
 
 void main() {
-  // 1. Full launcher icon: brand gradient + waveform.
-  final icon = img.Image(width: _iconSize, height: _iconSize);
-  _fillGradientBackground(icon);
-  _drawWaveform(
+  // 1. Full launcher icon (legacy launchers, web): volt with ink bars.
+  final icon = img.Image(width: _iconSize, height: _iconSize, numChannels: 4);
+  _fill(icon, _volt);
+  _drawBars(
     icon,
     cx: _iconSize / 2,
-    baselineY: _iconSize * 0.81,
-    totalWidth: _iconSize * 0.50,
-    maxHeight: _iconSize * 0.58,
+    cy: _iconSize / 2,
+    width: _iconSize * 0.56,
+    height: _iconSize * 0.52,
+    color: _ink,
   );
   _writePng(icon, 'assets/icon/app_icon.png');
 
-  // 2. Adaptive-icon foreground: bars only, centred inside the safe zone
-  //    (content must fit within the central ~66% of the canvas).
-  final foreground = img.Image(width: _iconSize, height: _iconSize);
-  _drawWaveform(
+  // 2. Adaptive-icon foreground: ink bars only, inside the safe zone (the
+  //    central ~66%); the volt background comes from pubspec.yaml.
+  final foreground = img.Image(width: _iconSize, height: _iconSize, numChannels: 4);
+  _drawBars(
     foreground,
     cx: _iconSize / 2,
-    baselineY: _iconSize * 0.70,
-    totalWidth: _iconSize * 0.42,
-    maxHeight: _iconSize * 0.40,
+    cy: _iconSize / 2,
+    width: _iconSize * 0.40,
+    height: _iconSize * 0.36,
+    color: _ink,
   );
   _writePng(foreground, 'assets/icon/app_icon_foreground.png');
 
-  // 3. Splash artwork: bars on transparent, sized for the native splash.
-  final splash = img.Image(width: _splashSize, height: _splashSize);
-  _drawWaveform(
+  // 3. Splash artwork: the volt logo tile on transparent (the splash colour
+  //    is ink), small enough for Android 12's circular icon mask.
+  final splash = img.Image(width: _splashSize, height: _splashSize, numChannels: 4);
+  _tile(splash, _splashSize / 2, _splashSize / 2, _splashSize * 0.5, _volt);
+  _drawBars(
     splash,
     cx: _splashSize / 2,
-    baselineY: _splashSize * 0.58,
-    totalWidth: _splashSize * 0.46,
-    maxHeight: _splashSize * 0.36,
+    cy: _splashSize / 2,
+    width: _splashSize * 0.28,
+    height: _splashSize * 0.26,
+    color: _ink,
   );
   _writePng(splash, 'assets/splash/splash.png');
 }

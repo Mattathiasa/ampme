@@ -1,7 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
+import '../../theme/amp_tokens.dart';
+import '../../ui/amp_button.dart';
+import '../../ui/amp_page_route.dart';
+import '../../ui/eq_visualizer.dart';
+import '../../ui/glass_card.dart';
+import '../../ui/live_pill.dart';
 import '../../widgets/amp_logo.dart';
 import '../host/host_gate.dart';
 import '../join/join_screen.dart';
@@ -31,9 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (code != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => JoinScreen(initialCode: code)),
-        );
+        Navigator.of(context).push(AmpPageRoute(builder: (_) => JoinScreen(initialCode: code)));
       });
     }
   }
@@ -41,72 +44,130 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final tokens = AmpTokens.of(context);
+    final display = theme.textTheme.displayLarge;
+    // Short screens (small phones, landscape, the 800×600 test surface)
+    // tighten up so both actions stay above the fold.
+    final compact = MediaQuery.sizeOf(context).height < 720;
+    final gap = compact ? 18.0 : 32.0;
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(gradient: AppTheme.heroGradient(scheme)),
+      body: AmpBackground(
         child: SafeArea(
           child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const AmpLogo(size: 104),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Ampme',
-                    style: theme.textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Play a song on one device and keep every connected phone perfectly in sync.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const HostScreen()),
-                    ),
-                    icon: const Icon(Icons.podcasts),
-                    label: const Text('Host a Session'),
-                  ),
-                  const SizedBox(height: 14),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const JoinScreen()),
-                    ),
-                    icon: const Icon(Icons.wifi_tethering),
-                    label: const Text('Join a Session'),
-                  ),
-                  const SizedBox(height: 28),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        kIsWeb ? Icons.link : Icons.wifi,
-                        size: 16,
-                        color: scheme.onSurfaceVariant,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    EnterAnimation(
+                      child: Row(
+                        children: [
+                          const AmpLogo(size: 40),
+                          const SizedBox(width: 12),
+                          Text(
+                            'AMPME',
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontFamily: AmpTokens.display,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                          const Spacer(),
+                          LivePill(label: kIsWeb ? 'Any browser' : 'Same WiFi', pulsing: false),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        kIsWeb
-                            ? 'Host from your browser — friends join with a code or link.'
-                            : 'Works over local WiFi — no cables, no cloud.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
+                    ),
+                    SizedBox(height: compact ? 20 : 48),
+                    EnterAnimation(
+                      index: 1,
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(text: 'ONE ROOM.\n'),
+                            TextSpan(
+                              text: 'ONE BEAT.',
+                              style: TextStyle(color: tokens.volt),
+                            ),
+                          ],
+                        ),
+                        style: display?.copyWith(fontSize: compact ? 44 : 60),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    EnterAnimation(
+                      index: 2,
+                      child: Text(
+                        'Every phone in the room plays the same song at the same '
+                        'instant — one giant speaker, no cables.',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: tokens.textDim,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: gap),
+                    EnterAnimation(
+                      index: 3,
+                      child: EqVisualizer(
+                        playing: false,
+                        idle: true,
+                        bars: 34,
+                        height: compact ? 56 : 110,
+                      ),
+                    ),
+                    SizedBox(height: gap),
+                    EnterAnimation(
+                      index: 4,
+                      child: AmpButton(
+                        label: 'Host a Session',
+                        icon: Icons.podcasts_rounded,
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).push(AmpPageRoute(builder: (_) => const HostScreen())),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    EnterAnimation(
+                      index: 5,
+                      child: AmpButton(
+                        label: 'Join a Session',
+                        icon: Icons.wifi_tethering_rounded,
+                        kind: AmpButtonKind.ghost,
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).push(AmpPageRoute(builder: (_) => const JoinScreen())),
+                      ),
+                    ),
+                    if (!compact) ...[
+                      const SizedBox(height: 28),
+                      EnterAnimation(
+                        index: 6,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.center,
+                          children: [
+                            for (final (icon, text) in [
+                              (Icons.bolt_rounded, 'Synced to ±20 ms'),
+                              (Icons.movie_rounded, 'Songs · videos · tabs'),
+                              (
+                                kIsWeb ? Icons.link_rounded : Icons.wifi_rounded,
+                                kIsWeb ? 'Join by code or link' : 'Local WiFi, no cloud',
+                              ),
+                            ])
+                              Chip(
+                                avatar: Icon(icon, size: 16, color: tokens.volt),
+                                label: Text(text),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                          ],
                         ),
                       ),
                     ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

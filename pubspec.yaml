@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.5.0+7
+version: 1.6.0+8
 
 environment:
   sdk: ^3.12.2
@@ -100,24 +100,54 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Bundled (not fetched at runtime): sessions often run on a LAN with no
+  # internet, and the web build ships without the CDN.
+  fonts:
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk-Bold.ttf
+          weight: 700
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+
 # Launcher icon (regenerate with `dart run flutter_launcher_icons`).
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/icon/app_icon.png"
-  adaptive_icon_background: "#140F1F"
+  adaptive_icon_background: "#D4FF3A"
   adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
   adaptive_icon_foreground_inset: 0
   min_sdk_android: 23
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background_color: "#0B0B0F"
+    theme_color: "#0B0B0F"
 
 # Native splash screen (regenerate with `dart run flutter_native_splash:create`).
 flutter_native_splash:
-  color: "#140F1F"
+  color: "#0B0B0F"
   image: "assets/splash/splash.png"
   android: true
   ios: false
   android_12:
-    color: "#140F1F"
+    color: "#0B0B0F"
     image: "assets/splash/splash.png"
 
   # To add assets to your application, add an assets section, like this:
