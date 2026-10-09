@@ -13,7 +13,8 @@ typedef SpectrumSampler = List<double>? Function(int bands);
 ///
 /// With a [spectrum] sampler (the browser host's WebAudio analyser) the bars
 /// follow the real audio. Without one — phones, whose player exposes no
-/// samples — they move to a deterministic beat-like pattern while [playing].
+/// samples — they hold a still equalizer shape while [playing] (see
+/// [EqVisualizerState._frozen] for why), and drift gently when [idle].
 ///
 /// Built to be cheap next to an audio player on a slow phone: a 20 fps
 /// timer (only those frames are requested) that repaints just this widget's
@@ -60,7 +61,15 @@ class EqVisualizerState extends State<EqVisualizer> {
   @visibleForTesting
   bool get isTicking => _timer?.isActive ?? false;
 
-  bool get _wantsMotion => !_reducedMotion && _onScreen && (widget.playing || widget.idle);
+  /// Without real samples, a playing visualizer holds a still shape instead
+  /// of animating: A/B runs showed even a 20 fps synthetic animation on a
+  /// listener measurably loosening its sync (60–100 ms vs < 10 ms) on a
+  /// slow, software-rendered device. Real-spectrum bars (the browser host)
+  /// and the idle/home animation (nothing to keep in sync) still move.
+  bool get _frozen => widget.playing && widget.spectrum == null;
+
+  bool get _wantsMotion =>
+      !_reducedMotion && _onScreen && !_frozen && (widget.playing || widget.idle);
 
   @override
   void didChangeDependencies() {
@@ -79,6 +88,12 @@ class EqVisualizerState extends State<EqVisualizer> {
   }
 
   void _sync() {
+    if (_frozen) {
+      _stop();
+      _levels = List.generate(_levels.length, (i) => _synthetic(1.7, i, _levels.length));
+      _repaint.value++;
+      return;
+    }
     // Keep animating after a stop until the bars have fallen back down.
     final run = !_reducedMotion && _onScreen && (_wantsMotion || !_atRest);
     if (run && !isTicking) {

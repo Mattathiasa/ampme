@@ -9,12 +9,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _app(Widget child, {bool reduceMotion = false}) => MaterialApp(
-      theme: AppTheme.dark(),
-      home: MediaQuery(
-        data: MediaQueryData(disableAnimations: reduceMotion),
-        child: Scaffold(body: Center(child: child)),
-      ),
-    );
+  theme: AppTheme.dark(),
+  home: MediaQuery(
+    data: MediaQueryData(disableAnimations: reduceMotion),
+    child: Scaffold(body: Center(child: child)),
+  ),
+);
 
 void main() {
   group('sync colours', () {
@@ -81,8 +81,10 @@ void main() {
     EqVisualizerState state(WidgetTester tester) =>
         tester.state<EqVisualizerState>(find.byType(EqVisualizer));
 
-    testWidgets('ticks while playing and rests when stopped', (tester) async {
-      await tester.pumpWidget(_app(const EqVisualizer(playing: true)));
+    List<double> flat(int n) => List.filled(n, 0.9);
+
+    testWidgets('animates a real spectrum and rests when stopped', (tester) async {
+      await tester.pumpWidget(_app(EqVisualizer(playing: true, spectrum: flat)));
       await tester.pump(const Duration(milliseconds: 100));
       expect(state(tester).isTicking, isTrue);
 
@@ -93,6 +95,19 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(state(tester).isTicking, isFalse);
+    });
+
+    testWidgets('holds still while playing without real samples', (tester) async {
+      // A synthetic animation on a listener measurably loosens its sync.
+      await tester.pumpWidget(_app(const EqVisualizer(playing: true)));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(state(tester).isTicking, isFalse);
+    });
+
+    testWidgets('drifts gently when idle', (tester) async {
+      await tester.pumpWidget(_app(const EqVisualizer(playing: false, idle: true)));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(state(tester).isTicking, isTrue);
     });
 
     testWidgets('never ticks with reduced motion', (tester) async {
