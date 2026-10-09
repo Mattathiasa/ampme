@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../theme/amp_tokens.dart';
-import '../widgets/playing_indicator.dart';
 
-/// One device in the room: an avatar that dances while it plays, its name,
+/// One device in the room: an avatar that lights up while it plays, its name,
 /// a status line, and on the right a [SyncRing] (or any [trailing]).
 /// [progress] shows a thin volt bar (e.g. while the song is copied over).
 class DeviceTile extends StatelessWidget {
@@ -54,7 +53,7 @@ class DeviceTile extends StatelessWidget {
                 ),
                 child: Center(
                   child: playing
-                      ? PlayingIndicator(isPlaying: true, color: tokens.onVolt, size: 20)
+                      ? Icon(Icons.graphic_eq_rounded, size: 24, color: tokens.onVolt)
                       : Icon(icon, size: 22, color: tokens.textDim),
                 ),
               ),

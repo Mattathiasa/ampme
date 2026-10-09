@@ -87,8 +87,11 @@ void main() {
       expect(state(tester).isTicking, isTrue);
 
       await tester.pumpWidget(_app(const EqVisualizer(playing: false)));
-      // Bars fall back down, then the ticker stops by itself.
-      await tester.pumpAndSettle();
+      // Bars fall back down, then the timer stops by itself.
+      expect(state(tester).isTicking, isTrue);
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
       expect(state(tester).isTicking, isFalse);
     });
 

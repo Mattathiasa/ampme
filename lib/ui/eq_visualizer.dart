@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/amp_tokens.dart';
@@ -15,10 +15,10 @@ typedef SpectrumSampler = List<double>? Function(int bands);
 /// follow the real audio. Without one — phones, whose player exposes no
 /// samples — they move to a deterministic beat-like pattern while [playing].
 ///
-/// Built to be cheap next to an audio player on a slow phone: one ticker
-/// throttled to ~30 fps that only repaints this widget's layer (no
-/// rebuilds), stopped once the bars come to rest, and off entirely when the
-/// platform asks for reduced motion.
+/// Built to be cheap next to an audio player on a slow phone: a 20 fps
+/// timer (only those frames are requested) that repaints just this widget's
+/// layer — no rebuilds, no blur — stopped once the bars come to rest, while
+/// off-stage, and entirely when the platform asks for reduced motion.
 class EqVisualizer extends StatefulWidget {
   const EqVisualizer({
     super.key,
@@ -44,24 +44,30 @@ class EqVisualizer extends StatefulWidget {
 }
 
 @visibleForTesting
-class EqVisualizerState extends State<EqVisualizer> with SingleTickerProviderStateMixin {
-  static const _frame = Duration(milliseconds: 33);
+class EqVisualizerState extends State<EqVisualizer> {
+  /// 20 fps. A [Timer], not a Ticker: a running Ticker asks the engine for
+  /// a frame on every vsync (60–120 Hz) even when the tick does nothing,
+  /// and on a slow phone those extra frames compete with the audio player.
+  static const _frame = Duration(milliseconds: 50);
 
-  late final Ticker _ticker = createTicker(_tick);
+  Timer? _timer;
+  final _clock = Stopwatch();
   final _repaint = ValueNotifier<int>(0);
   late List<double> _levels = List.filled(widget.bars, 0.08);
-  Duration _last = Duration.zero;
   bool _reducedMotion = false;
+  bool _onScreen = true;
 
   @visibleForTesting
-  bool get isTicking => _ticker.isActive;
+  bool get isTicking => _timer?.isActive ?? false;
 
-  bool get _wantsMotion => !_reducedMotion && (widget.playing || widget.idle);
+  bool get _wantsMotion => !_reducedMotion && _onScreen && (widget.playing || widget.idle);
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _reducedMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    // Off-stage (a route underneath, a hidden tab): don't animate.
+    _onScreen = TickerMode.valuesOf(context).enabled;
     _sync();
   }
 
@@ -73,21 +79,26 @@ class EqVisualizerState extends State<EqVisualizer> with SingleTickerProviderSta
   }
 
   void _sync() {
-    // Keep ticking after a stop until the bars have fallen back down.
-    if ((_wantsMotion || !_atRest) && !_reducedMotion) {
-      if (!_ticker.isActive) _ticker.start();
-    } else if (_ticker.isActive) {
-      _ticker.stop();
-      _last = Duration.zero;
+    // Keep animating after a stop until the bars have fallen back down.
+    final run = !_reducedMotion && _onScreen && (_wantsMotion || !_atRest);
+    if (run && !isTicking) {
+      _clock.start();
+      _timer = Timer.periodic(_frame, (_) => _tick());
+    } else if (!run && isTicking) {
+      _stop();
     }
+  }
+
+  void _stop() {
+    _timer?.cancel();
+    _timer = null;
+    _clock.stop();
   }
 
   bool get _atRest => _levels.every((v) => v <= 0.09);
 
-  void _tick(Duration elapsed) {
-    if (elapsed - _last < _frame) return;
-    _last = elapsed;
-    final t = elapsed.inMicroseconds / 1e6;
+  void _tick() {
+    final t = _clock.elapsedMicroseconds / 1e6;
     final n = _levels.length;
     final real = widget.playing ? widget.spectrum?.call(n) : null;
     for (var i = 0; i < n; i++) {
@@ -96,20 +107,17 @@ class EqVisualizerState extends State<EqVisualizer> with SingleTickerProviderSta
         target = real[i].clamp(0.04, 1.0);
       } else if (widget.playing) {
         target = _synthetic(t, i, n);
-      } else if (widget.idle && !_reducedMotion) {
+      } else if (widget.idle) {
         target = 0.10 + 0.14 * (0.5 + 0.5 * math.sin(t * 1.3 + i * 0.45));
       } else {
         target = 0.08;
       }
       final v = _levels[i];
       // Fast attack, slower release: reads as "punchy".
-      _levels[i] = v + (target - v) * (target > v ? 0.55 : 0.18);
+      _levels[i] = v + (target - v) * (target > v ? 0.6 : 0.24);
     }
     _repaint.value++;
-    if (!_wantsMotion && _atRest) {
-      _ticker.stop();
-      _last = Duration.zero;
-    }
+    if (!_wantsMotion && _atRest) _stop();
   }
 
   /// A beat-like pattern: a kick every ~0.47 s weighted to the low bars,
@@ -126,7 +134,7 @@ class EqVisualizerState extends State<EqVisualizer> with SingleTickerProviderSta
 
   @override
   void dispose() {
-    _ticker.dispose();
+    _stop();
     _repaint.dispose();
     super.dispose();
   }
@@ -144,7 +152,6 @@ class EqVisualizerState extends State<EqVisualizer> with SingleTickerProviderSta
             repaint: _repaint,
             color: widget.color ?? tokens.volt,
             peak: tokens.signal,
-            glow: tokens.glowStrength,
           ),
         ),
       ),
@@ -158,13 +165,11 @@ class _EqPainter extends CustomPainter {
     required Listenable repaint,
     required this.color,
     required this.peak,
-    required this.glow,
   }) : super(repaint: repaint);
 
   final List<double> levels;
   final Color color;
   final Color peak;
-  final double glow;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -179,11 +184,6 @@ class _EqPainter extends CustomPainter {
         colors: [color, color, Color.lerp(color, peak, 0.85)!],
         stops: const [0, 0.62, 1],
       ).createShader(Offset.zero & size);
-    final halo = glow > 0
-        ? (Paint()
-            ..color = color.withValues(alpha: 0.22 * glow)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6))
-        : null;
     final r = Radius.circular(w / 2);
     for (var i = 0; i < n; i++) {
       final h = math.max(w, size.height * levels[i]);
@@ -194,7 +194,6 @@ class _EqPainter extends CustomPainter {
         size.height,
         r,
       );
-      if (halo != null && levels[i] > 0.5) canvas.drawRRect(rect, halo);
       canvas.drawRRect(rect, bar);
     }
   }

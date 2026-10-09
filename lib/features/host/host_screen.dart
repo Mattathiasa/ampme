@@ -120,7 +120,6 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
               LivePill(
                 label: playing ? 'Live · playing' : 'Live · waiting',
                 color: playing ? tokens.volt : tokens.textDim,
-                pulsing: playing,
               ),
               const SizedBox(height: 14),
               Text(
