@@ -3,6 +3,13 @@
 Play a song on one phone and every other phone connected to the same session
 plays it back in sync — no cables, no cloud, just the local WiFi network.
 
+**Look & feel:** volt lime (`#D4FF3A`) on ink (`#0B0B0F`) with a matching
+light mode. Fonts are bundled, not fetched, so the app looks right on a LAN with
+no internet. The visualizer follows the real audio on a browser host; on phones
+(whose player exposes no samples) it runs a synthetic beat while playing. It is
+throttled to ~30 fps, repaints only itself, and stops when playback stops or the
+system asks for reduced motion.
+
 ## How it works
 
 - **Host a session**: pick a local audio file. The app runs a small HTTP
@@ -54,6 +61,10 @@ lib/
     session/    # HostSessionController / ListenerSessionController
   features/
     home/, host/, join/   # screens + view models
+  theme/        # "Electric Club" design tokens (AmpTokens) + Material themes
+  ui/           # component kit: AmpButton, GlassCard, EqVisualizer, SyncRing,
+                # JoinCodeDisplay, SourceTile, DeviceTile, AmpPageRoute…
+assets/fonts/   # Space Grotesk, Inter, JetBrains Mono (bundled, OFL)
 test/
   core/network/  # unit tests for clock sync math, message (de)serialization,
                  # and HTTP range parsing — the parts with no UI to click

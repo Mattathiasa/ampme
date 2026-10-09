@@ -201,8 +201,9 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — every device plays in step: songs, videos (now hostable from the Android app too), and any browser tab.
+          **Ampme v$VERSION** — a whole new look: one room, one beat.
 
+          - **Redesigned app, web app and website:** a new "Electric Club" look — volt-on-ink (with a light mode), bold type, a live visualizer, per-device sync rings, a big tile-style join code, smoother transitions and haptics.
           - **Share a browser tab (YouTube…):** on the web host (Chrome/Edge on a computer), share a tab and every device — the host included — plays its sound together, 1 s behind the tab.
           - **Videos, from the web or the Android app:** pick a video on the host; it shows the picture and every other device plays the sound in sync (phones get the sound only, not the whole video).
           - **Real sync for web-hosted sessions:** every device plays its own copy, started at the same instant, with drift correction every second.
