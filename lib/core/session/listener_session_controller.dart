@@ -717,6 +717,7 @@ class ListenerSessionController extends ChangeNotifier
       clockOffsetMs = estimate.offsetMs;
       roundTripMs = estimate.roundTripMs;
     }
+    final now = DateTime.now();
     _client?.send(
       ControlMessage.listenerStatusUpdate(
         senderId: selfDevice.deviceId,
@@ -727,11 +728,15 @@ class ListenerSessionController extends ChangeNotifier
         // a poll interval old by the time it's compared.
         // Minus the nudge: the host compares against the shared timeline, and
         // a deliberate lead isn't drift.
-        positionMs:
-            audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds -
-                syncNudgeMs,
+        positionMs: audioEngine.estimatePositionAt(now).inMilliseconds - syncNudgeMs,
         syncOffsetMs: clockOffsetMs ?? 0,
         roundTripMs: roundTripMs ?? 0,
+        // The instant that position belongs to, on the host's clock: the host
+        // compares against its own timeline at exactly that instant instead
+        // of guessing the delivery delay (any queueing read as "behind").
+        sentAtHostMs: estimate == null
+            ? null
+            : now.millisecondsSinceEpoch + estimate.offsetMs,
       ),
     );
   }

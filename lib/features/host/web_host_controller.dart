@@ -1068,6 +1068,7 @@ class WebHostController extends ChangeNotifier {
       roundTripMs: listener.roundTripMs ?? 0,
       receivedAtMs: _nowMs(),
       hostPositionAt: _timelinePositionAt,
+      sentAtHostMs: payload['sentAtHostMs'] as int?,
     );
     final previous = listener.driftMs;
     // Light smoothing: the reported position is interpolated and jittery.

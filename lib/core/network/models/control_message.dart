@@ -279,6 +279,7 @@ class ControlMessage {
     required int positionMs,
     required int syncOffsetMs,
     required int roundTripMs,
+    int? sentAtHostMs,
   }) {
     return ControlMessage(
       type: ControlMessageType.listenerStatusUpdate,
@@ -289,6 +290,8 @@ class ControlMessage {
         'positionMs': positionMs,
         'syncOffsetMs': syncOffsetMs,
         'roundTripMs': roundTripMs,
+        // When [positionMs] was measured, on the host's clock (newer apps).
+        'sentAtHostMs': ?sentAtHostMs,
       },
     );
   }

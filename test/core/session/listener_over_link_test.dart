@@ -61,8 +61,10 @@ void main() {
   test('a browser-hosted session schedules the start on the host timeline', () async {
     final toListener = StreamController<String>();
     final fromListener = <ControlMessage>[];
+    final receivedAt = <ControlMessage, int>{};
     void hostReceives(String frame) {
       final m = ControlMessage.decode(frame);
+      receivedAt[m] = DateTime.now().millisecondsSinceEpoch;
       if (m.type == ControlMessageType.clockSyncRequest) {
         scheduleMicrotask(() => toListener.add(
               ControlMessage.clockSyncResponse(
@@ -137,6 +139,15 @@ void main() {
       closeTo(startAtHost - hostAheadMs, 15),
     );
     expect(session.hostIsPlaying, isTrue);
+
+    // Status reports carry the instant they were measured, on the host's
+    // clock, so the host compares at that instant whatever the delivery delay.
+    await Future<void>.delayed(const Duration(milliseconds: 2100));
+    final status = fromListener.lastWhere((m) => m.type == ControlMessageType.listenerStatusUpdate);
+    expect(
+      status.payload['sentAtHostMs'] as int,
+      closeTo(receivedAt[status]! + hostAheadMs, 30),
+    );
 
     session.dispose();
   });

@@ -20,6 +20,7 @@ import '../network/models/playback_state.dart';
 import '../network/models/session_beacon.dart';
 import '../network/models/track_info.dart';
 import '../network/network_utils.dart';
+import '../sync/report_time.dart';
 import '../../utils/id_generator.dart';
 
 /// How far into the future a `play`/`seek` command's target start time is
@@ -490,7 +491,15 @@ class HostSessionController extends ChangeNotifier {
           // Keep the listener locked to the host's playhead: listeners report
           // their position every 2s, so if theirs has drifted we can send a
           // precise reference right now instead of waiting for a user action.
-          _maybeCorrectListenerDrift(incoming.deviceId, status.positionMs);
+          _maybeCorrectListenerDrift(
+            incoming.deviceId,
+            status.positionMs,
+            reportTimeMs(
+              status.roundTripMs,
+              DateTime.now().millisecondsSinceEpoch,
+              message.payload['sentAtHostMs'] as int?,
+            ),
+          );
           notifyListeners();
         case ControlMessageType.ready:
           // Counted only while a prepare handshake is in flight, so stale
@@ -589,7 +598,7 @@ class HostSessionController extends ChangeNotifier {
   /// re-anchor. Only meaningful while the host is playing a file track (live
   /// broadcasts have no position to correct to) and only when the deviation
   /// is real, so we don't chase per-sample jitter.
-  void _maybeCorrectListenerDrift(String deviceId, int listenerPositionMs) {
+  void _maybeCorrectListenerDrift(String deviceId, int listenerPositionMs, int reportedAtMs) {
     if (playbackState != PlaybackState.playing) return;
     final track = currentTrack;
     if (track == null || track.isLive) return;
@@ -597,8 +606,12 @@ class HostSessionController extends ChangeNotifier {
     // Interpolate to now on both sides: the listener's report is up to a
     // poll interval old, and our own getter would be too — comparing two
     // stale values is what makes drift detection chase quantization noise.
-    final hostPositionMs = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
-    final drift = listenerPositionMs - hostPositionMs;
+    final now = DateTime.now();
+    final hostPositionMs = audioEngine.estimatePositionAt(now).inMilliseconds;
+    // Compare against where we were when the listener measured its position,
+    // not now: the report took a while to arrive.
+    final drift = listenerPositionMs -
+        (hostPositionMs - (now.millisecondsSinceEpoch - reportedAtMs));
     if (drift.abs() < _maxDriftMs) return;
 
     _controlServer.sendTo(
