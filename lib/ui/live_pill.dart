@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../theme/amp_tokens.dart';
 
-/// A status chip with a dot that pulses while [pulsing] ("● LIVE").
+/// A status chip with a glowing dot ("● LIVE"). [pulsing] animates the dot —
+/// only for short waiting states: a running animation makes Flutter web
+/// re-render the whole page every frame, which competes with playback.
 class LivePill extends StatefulWidget {
-  const LivePill({super.key, required this.label, this.color, this.pulsing = true});
+  const LivePill({super.key, required this.label, this.color, this.pulsing = false});
 
   final String label;
   final Color? color;

@@ -203,7 +203,6 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
           LivePill(
             label: playing ? 'Live · playing' : 'Live · waiting',
             color: playing ? tokens.volt : tokens.textDim,
-            pulsing: playing,
           ),
           const SizedBox(height: 14),
           Text(
@@ -436,11 +435,7 @@ class _LiveShareCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              LivePill(
-                label: playing ? 'Live tab audio' : 'Starting…',
-                color: tokens.signal,
-                pulsing: playing,
-              ),
+              LivePill(label: playing ? 'Live tab audio' : 'Starting…', color: tokens.signal),
             ],
           ),
           const SizedBox(height: 16),
