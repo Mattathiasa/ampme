@@ -1,14 +1,11 @@
 import 'dart:async';
 
 import 'package:just_audio/just_audio.dart' as ja;
-import 'package:just_audio_background/just_audio_background.dart';
 
 import '../network/models/playback_state.dart';
 import '../observability/reporting.dart';
-import '../../utils/id_generator.dart';
 import 'audio_engine.dart';
 import 'audio_session_manager.dart';
-import 'background_audio.dart';
 
 /// `just_audio`/ExoPlayer-backed [AudioEngine].
 ///
@@ -87,24 +84,8 @@ class JustAudioEngine implements AudioEngine {
     return _player.setAudioSource(_source(uri, title));
   }
 
-  /// Wraps a URI, tagging it with a [MediaItem] so `just_audio_background`
-  /// can show a lock-screen/notification control and keep playback alive in
-  /// the foreground service.
-  ///
-  /// The tag is only attached when [backgroundAudioReady] — attaching it
-  /// while `just_audio_background` is uninitialized throws a
-  /// `LateInitializationError` from its `_audioHandler`, which is what
-  /// broke track loading. Without the tag playback still works; it just
-  /// loses the lock-screen controls.
-  ja.AudioSource _source(Uri uri, String title) {
-    if (!backgroundAudioReady) {
-      return ja.AudioSource.uri(uri);
-    }
-    return ja.AudioSource.uri(
-      uri,
-      tag: MediaItem(id: generateId(), title: title, album: 'Ampme'),
-    );
-  }
+  // [title] is unused on this engine (there is no media notification).
+  ja.AudioSource _source(Uri uri, String title) => ja.AudioSource.uri(uri);
 
   @override
   Future<void> play() => _player.play();

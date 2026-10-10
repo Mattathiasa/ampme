@@ -56,7 +56,7 @@ class HostViewModel extends ChangeNotifier {
         context: context,
       );
       await AppPermissions.requestLocalNetworkAccess();
-      // Best-effort: lets the just_audio_background media notification show on
+      // Best-effort: lets the system-audio capture notification show on
       // Android 13+. Playback works regardless of the outcome.
       await AppPermissions.requestNotificationAccess();
       if (!hasAudioAccess) {

@@ -38,9 +38,6 @@ dependencies:
   # Windows playback (WinRT MediaPlayer). Native plugin — auto-registers via
   # windows/flutter/generated_plugin_registrant.cc, no Dart wiring needed.
   just_audio_windows: ^0.2.3
-  # Direct dependency so main() can save/restore JustAudioPlatform.instance
-  # when just_audio_background initialization fails (see lib/main.dart).
-  just_audio_platform_interface: ^4.6.0
   web_socket_channel: ^3.0.3
   file_picker: ^11.0.3
   # 13.x pulls permission_handler_android 14, which requires compileSdk 37
@@ -52,7 +49,6 @@ dependencies:
   uuid: ^4.6.0
   mime: ^2.0.0
   qr_flutter: ^4.1.0
-  just_audio_background: ^0.0.1-beta.17
   # QR scanning to join a session by pointing the camera at the host's code.
   mobile_scanner: ^5.2.3
   # Microphone PCM capture for the "amplify the room" live broadcast (host).

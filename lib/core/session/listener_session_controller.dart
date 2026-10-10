@@ -744,9 +744,8 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   Future<void> _disposeAsync() async {
-    // Release the audio engine first: just_audio_background supports a single
-    // player instance, so if the user quickly hosts again or joins, the old
-    // player must already be gone before a new one is created.
+    // Release the audio engine promptly so hosting again or re-joining
+    // doesn't run two players at once.
     _statusTimer?.cancel();
     await _positionSub?.cancel();
     await _stateSub?.cancel();

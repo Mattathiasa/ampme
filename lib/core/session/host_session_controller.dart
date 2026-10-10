@@ -497,8 +497,8 @@ class HostSessionController extends ChangeNotifier {
           // acks from a previous command can't satisfy the current wait.
           if (_awaitingReadyAcks) _readyAcks.add(incoming.deviceId);
         case ControlMessageType.calibrate:
-          // A phone host can't mix a chirp into the music (one player per
-          // app); answer with no time so the listener says so.
+          // A phone host doesn't mix a chirp into the music yet; answer
+          // with no time so the listener says so.
           _controlServer.sendTo(
             incoming.deviceId,
             ControlMessage.calibrate(senderId: hostDevice.deviceId),
@@ -662,10 +662,8 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> _disposeAsync() async {
-    // Release the audio engine first: just_audio_background supports a single
-    // player instance, so if a follow-up screen (e.g. joining a session right
-    // after leaving host) creates its player before this one is disposed, the
-    // old player must already be gone.
+    // Release the audio engine promptly so a follow-up screen (e.g. joining a
+    // session right after leaving host) doesn't run two players at once.
     _stopPositionSyncTimer();
     await _positionSub?.cancel();
     await _stateSub?.cancel();

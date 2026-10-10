@@ -8,7 +8,7 @@ import 'acoustic_calibration.dart';
 
 /// Plays one calibration chirp through [engine] — on a listener, the very
 /// player the music uses, so the chirp carries exactly the music's output
-/// delay (Android allows only one player per app anyway).
+/// delay.
 ///
 /// The WAV is [leadMs] of silence, the chirp, then a tail; the player starts
 /// [leadMs] early so the chirp itself lands on the requested instant.

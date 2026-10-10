@@ -206,6 +206,7 @@ jobs:
           - **Sync nudge + "Calibrate with mic":** if a phone sounds behind (or ahead of) the host — Bluetooth speakers especially — open its now-playing card and nudge it, or tap **Calibrate with mic** (web-hosted sessions) to have it measured with the microphone. The setting is saved per device.
           - **Full-screen video:** a full-screen button (or double-tap) on the host's picture, on the web and on Android (immersive landscape); the picture stays in sync.
           - **MKV and Dolby/DTS videos on the web host:** when the browser can't read a video's sound, a converter (~32 MB, downloaded once) turns it into something every device can play.
+          - **Faster, more reliable app start on Android:** a hidden duplicate copy of the app no longer starts alongside it.
           - **Sharing a YouTube tab now carries its sound:** the picker opens on browser tabs, and if no sound comes through you get a clear message saying why.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
