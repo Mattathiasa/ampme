@@ -224,7 +224,14 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
     );
 
     final nowPlaying = <Widget>[
-      if (track != null && controller.video != null) ...[
+      if (track != null && controller.video != null && controller.videoFailed) ...[
+        const AlertStrip(
+          message: 'This browser can’t show this video’s picture — the sound '
+              'still plays on every device.',
+          icon: Icons.videocam_off_rounded,
+        ),
+        const SizedBox(height: 8),
+      ] else if (track != null && controller.video != null) ...[
         ClipRRect(
           borderRadius: BorderRadius.circular(AmpTokens.radiusCard),
           child: WebVideoView(video: controller.video!),
@@ -293,7 +300,8 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
       if (controller.preparingSoundProgress case final progress?) ...[
         const SizedBox(height: 4),
         Text(
-          'Preparing the sound for the phones… ${(progress * 100).round()}%',
+          '${controller.preparingSoundNote ?? 'Preparing the sound for the phones…'} '
+          '${(progress * 100).round()}%',
           style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
         ),
         const SizedBox(height: 6),

@@ -20,6 +20,7 @@ import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
 import '../../core/network/live_frames.dart';
 import 'audio_extract.dart';
+import 'ffmpeg_audio.dart';
 import 'sync_math.dart';
 import 'web_live_capture.dart';
 
@@ -176,6 +177,13 @@ class WebHostController extends ChangeNotifier {
 
   /// 0..1 while a video's sound is being prepared for the phones.
   double? preparingSoundProgress;
+
+  /// What the "preparing" progress is about, when it isn't the usual
+  /// encode for the phones (e.g. downloading the audio converter).
+  String? preparingSoundNote;
+
+  /// True when this browser couldn't show the current video's picture.
+  bool videoFailed = false;
 
   // ---- Shared tab (live capture) ----
   WebLiveCapture? _capture;
@@ -337,10 +345,7 @@ class WebHostController extends ChangeNotifier {
     if (isSharingTab) stopTabShare();
     try {
       final ctx = _ctx ??= web.AudioContext();
-      // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
-      // and the original bytes still have to be sent to listeners.
-      final copy = Uint8List.fromList(bytes);
-      final buffer = await ctx.decodeAudioData(copy.buffer.toJS).toDart;
+      final buffer = await _decodeSound(ctx, bytes, fileName);
       _stopSource();
       _stopReferenceTimer();
       _buffer = buffer;
@@ -389,10 +394,58 @@ class WebHostController extends ChangeNotifier {
       _notify();
     } catch (e, st) {
       preparingSoundProgress = null;
-      errorMessage = 'Could not read the sound in that file '
-          '(is it a format this browser plays?): $e';
+      errorMessage = e is StateError
+          ? e.message
+          : 'Could not read the sound in that file '
+              '(is it a format this browser plays?): $e';
       reportError(e, st, context: 'webHost.loadTrack');
       _notify();
+    }
+  }
+
+  /// The file's sound as an AudioBuffer. The browser decodes most files
+  /// itself; what it can't (Dolby/DTS sound, many MKVs) goes through
+  /// ffmpeg.wasm first, which is downloaded once on demand.
+  Future<web.AudioBuffer> _decodeSound(
+    web.AudioContext ctx,
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
+    // and the original bytes are still needed (video picture, sending).
+    Future<web.AudioBuffer> decode(Uint8List data) =>
+        ctx.decodeAudioData(Uint8List.fromList(data).buffer.toJS).toDart;
+    try {
+      return await decode(bytes);
+    } catch (_) {
+      // Fall through to the converter.
+    }
+    try {
+      preparingSoundProgress = 0;
+      preparingSoundNote = 'Reading this file’s sound…';
+      _notify();
+      final converted = await extractAudioWithFfmpeg(
+        bytes,
+        fileName,
+        onStage: (stage) {
+          preparingSoundNote = stage == FfmpegStage.download
+              ? 'Downloading the audio converter (32 MB, once)…'
+              : 'Converting this file’s sound…';
+          _notify();
+        },
+        onProgress: (p) {
+          preparingSoundProgress = p;
+          _notify();
+        },
+      );
+      return await decode(converted);
+    } catch (e) {
+      throw StateError(
+        'This browser can’t read the sound in that file, and converting it '
+        'failed ($e). Try an MP4 or WebM, or check the internet connection.',
+      );
+    } finally {
+      preparingSoundNote = null;
     }
   }
 
@@ -797,7 +850,8 @@ class WebHostController extends ChangeNotifier {
       web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mime ?? 'video/mp4')),
     );
     _videoUrl = url;
-    _video = (web.document.createElement('video') as web.HTMLVideoElement)
+    videoFailed = false;
+    final video = _video = (web.document.createElement('video') as web.HTMLVideoElement)
       ..muted = true // the sound comes from the WebAudio timeline
       ..playsInline = true
       ..preload = 'auto'
@@ -807,6 +861,13 @@ class WebHostController extends ChangeNotifier {
       ..style.height = '100%'
       ..style.objectFit = 'contain'
       ..style.backgroundColor = 'black';
+    // A picture this browser can't decode (e.g. HEVC): the sound still
+    // plays everywhere; the UI says why there's no picture.
+    video.onerror = ((web.Event _) {
+      if (!identical(_video, video)) return;
+      videoFailed = true;
+      _notify();
+    }).toJS;
   }
 
   /// Starts the picture at context time [when] from [offsetSec], then keeps
