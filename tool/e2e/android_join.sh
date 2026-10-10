@@ -107,6 +107,8 @@ if [ -n "$CRASH" ]; then
   echo "$CRASH" >&2
   exit 1
 fi
+echo "--- the app's sync loop (listener's own view of its drift):"
+grep -F "[sync]" <<<"$LOGCAT" | tail -n 40 || true
 echo "--- app errors in logcat (flutter / WebRTC), if any:"
 grep -iE "flutter.*(error|exception)|webrtc.*(error|fail)" <<<"$LOGCAT" | tail -n 20 || true
 

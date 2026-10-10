@@ -74,8 +74,8 @@ jobs:
             echo "KEY_ALIAS=$KEY_ALIAS"
             echo "KEY_PASSWORD=$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
-      - run: flutter build apk --release --split-per-abi
-      - run: flutter build apk --release
+      - run: flutter build apk --release --split-per-abi --dart-define=AMPME_SYNC_LOG=true
+      - run: flutter build apk --release --dart-define=AMPME_SYNC_LOG=true
       - name: Collect APKs
         run: |
           mkdir -p apks

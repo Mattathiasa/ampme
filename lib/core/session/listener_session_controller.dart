@@ -83,6 +83,10 @@ class ListenerSessionController extends ChangeNotifier
     notifyListeners();
   }
   DateTime? _lastCorrectionAt;
+  /// Logs every sync reference (`--dart-define=AMPME_SYNC_LOG=true`), for
+  /// diagnosing drift on real devices and in CI.
+  static const bool _syncLog = bool.fromEnvironment('AMPME_SYNC_LOG');
+
   static const Duration _correctionSettleTime = Duration(milliseconds: 2000);
 
   /// Test hook: pretends the last drift correction happened [age] ago.
@@ -669,13 +673,20 @@ class ListenerSessionController extends ChangeNotifier
     // Measure against an interpolated position, not the raw getter — the
     // platform only refreshes positions on a coarse grid, and comparing two
     // stale values would make this loop chase up to ~250ms of fake drift.
-    final drift = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds - target;
+    final estimate = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
+    final drift = estimate - target;
+    void trace(String action) {
+      if (!_syncLog) return;
+      debugPrint('[sync] drift=$drift target=$target est=$estimate '
+          'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
+          'lead=$seekLeadMs nudge=$syncNudgeMs $action');
+    }
     // The host re-broadcasts a measured reference every second, so a small
     // correction here is cheap and frequent — chasing down to ~30ms keeps
     // devices audibly locked while staying above the residual clock-estimate
     // noise (a few ms on a LAN). The seek itself is tiny (≤1 frame at 30ms),
     // so it isn't audible.
-    if (drift.abs() < 30) return;
+    if (drift.abs() < 30) return trace('ok');
 
     final now = DateTime.now();
     final last = _lastCorrectionAt;
@@ -684,7 +695,7 @@ class ListenerSessionController extends ChangeNotifier
       // Let the previous seek settle (rebuffer, fresh position updates)
       // before judging it or seeking again: back-to-back seeks on a slow
       // device starve the audio output and make the drift worse.
-      if (since < _correctionSettleTime) return;
+      if (since < _correctionSettleTime) return trace('settling');
       // Still off after a recent correction: it landed `drift` away from
       // where it aimed. Move the aim 70 % of that way (damped, so noisy
       // readings can't make it oscillate).
@@ -693,6 +704,7 @@ class ListenerSessionController extends ChangeNotifier
       }
     }
     _lastCorrectionAt = now;
+    trace('seek');
     unawaited(audioEngine.seek(Duration(milliseconds: target + seekLeadMs)));
   }
 
