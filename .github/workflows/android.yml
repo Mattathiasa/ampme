@@ -203,6 +203,7 @@ jobs:
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
           **Ampme v$VERSION** — tighter sync, full-screen video, MKV and working tab sound.
 
+          - **Steadier sync:** listeners now close small drift by playing a touch faster or slower instead of skipping (which on some phones kept overshooting), and the host's per-device sync readout no longer mistakes network delay for lag.
           - **Sync nudge + "Calibrate with mic":** if a phone sounds behind (or ahead of) the host — Bluetooth speakers especially — open its now-playing card and nudge it, or tap **Calibrate with mic** (web-hosted sessions) to have it measured with the microphone. The setting is saved per device.
           - **Full-screen video:** a full-screen button (or double-tap) on the host's picture, on the web and on Android (immersive landscape); the picture stays in sync.
           - **MKV and Dolby/DTS videos on the web host:** when the browser can't read a video's sound, a converter (~32 MB, downloaded once) turns it into something every device can play.

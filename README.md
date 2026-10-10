@@ -24,8 +24,12 @@ system asks for reduced motion.
   Each listener converts that to its own local time using the estimated
   clock offset, pre-buffers, and fires playback from a precise timer at that
   instant — instead of just reacting to "play now" and drifting. While
-  playing, the host re-broadcasts its *measured* playhead once a second and
-  listeners apply tiny (~30ms) corrections, so drift never grows audible.
+  playing, the host re-broadcasts its *measured* playhead once a second.
+  A listener more than ~30 ms off plays up to 3 % fast or slow (pitch
+  preserved) until it's back; only jumps over ~120 ms are seeked, since
+  seeks land imprecisely on many phones. Listeners stamp their status
+  reports with when they were measured (host clock), so the drift the host
+  shows is what the listener really has, not network delay.
   Clock sync runs continuously (a sample every 2s, plus a burst before every
   scheduled start) so time conversions stay fresh.
 - **Ready-ack starts**: before a play/seek, the host asks every listener to
