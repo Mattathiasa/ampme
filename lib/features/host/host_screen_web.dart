@@ -15,6 +15,7 @@ import '../../ui/source_tile.dart';
 import '../../ui/sync_ring.dart';
 import 'web_host_controller.dart'
     show ListenerPhase, WebListener, liveDelayMs, maxSpeakerOffsetMs, minSpeakerOffsetMs;
+import 'tab_share_messages.dart';
 import 'web_host_view_model.dart';
 import 'widgets/invite_card.dart';
 import 'widgets/transport_controls.dart';
@@ -238,6 +239,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
       if (track != null && track.isLiveCapture) ...[
         _LiveShareCard(
           playing: controller.liveIsPlaying,
+          silent: controller.liveSilent,
           volume: controller.volume,
           spectrum: controller.spectrum,
           onVolumeChanged: viewModel.setVolume,
@@ -280,7 +282,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         icon: Icons.tab_rounded,
         title: 'Share a browser tab (YouTube…)',
         subtitle: controller.canShareTab
-            ? 'Every device hears the tab ${liveDelayMs / 1000} s behind it, together'
+            ? 'Pick the YouTube tab and keep “Share tab audio” on'
             : 'Sharing a tab needs Chrome or Edge on a computer.',
         accent: tokens.signal,
         active: controller.isSharingTab,
@@ -412,6 +414,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
 class _LiveShareCard extends StatelessWidget {
   const _LiveShareCard({
     required this.playing,
+    required this.silent,
     required this.volume,
     required this.spectrum,
     required this.onVolumeChanged,
@@ -419,6 +422,7 @@ class _LiveShareCard extends StatelessWidget {
   });
 
   final bool playing;
+  final bool silent;
   final double volume;
   final List<double>? Function(int bands) spectrum;
   final ValueChanged<double> onVolumeChanged;
@@ -440,6 +444,10 @@ class _LiveShareCard extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           EqVisualizer(playing: playing, spectrum: spectrum, height: 72, color: tokens.signal),
+          if (silent) ...[
+            const SizedBox(height: 14),
+            const AlertStrip(message: silentTabMessage, icon: Icons.volume_off_rounded),
+          ],
           const SizedBox(height: 14),
           Text(
             'Every device — this one included — plays the tab '

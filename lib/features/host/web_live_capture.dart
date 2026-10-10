@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
 
+import 'tab_share_messages.dart';
+
 /// AudioWorklet that hands the main thread ~43 ms batches of stereo samples,
 /// each stamped with the audio-clock frame it starts at (so a silent or
 /// stalled input can never shift the timeline).
@@ -40,12 +42,16 @@ class AmpmeCapture extends AudioWorkletProcessor {
 registerProcessor('ampme-capture', AmpmeCapture);
 ''';
 
-/// Whether this browser can share another tab's audio (desktop Chrome/Edge;
-/// not Safari or mobile browsers).
+/// Whether this browser can share another tab's audio: desktop Chrome/Edge
+/// (Chromium). Firefox and Safari have screen sharing but never share audio,
+/// and mobile browsers can't share tabs; `CaptureController` is a
+/// Chromium-only API, so it tells them apart.
 bool get canCaptureTabAudio {
   try {
     final devices = web.window.navigator.mediaDevices as JSObject;
-    return devices.has('getDisplayMedia') && web.window.has('AudioWorkletNode');
+    return devices.has('getDisplayMedia') &&
+        web.window.has('AudioWorkletNode') &&
+        web.window.has('CaptureController');
   } catch (_) {
     return false;
   }
@@ -76,7 +82,10 @@ class WebLiveCapture {
   /// the shared timeline. Throws [StateError] if no audio was shared.
   static Future<WebLiveCapture> pickTab(web.AudioContext ctx) async {
     final options = <String, Object?>{
-      'video': true, // required by the API; the picture is discarded
+      // A video track is required by the API (the picture is discarded);
+      // 'browser' opens Chrome/Edge's share dialog on the Tab pane, the only
+      // kind of source that can share sound on every OS.
+      'video': {'displaySurface': 'browser'},
       'audio': {
         'suppressLocalAudioPlayback': true,
         'echoCancellation': false,
@@ -85,16 +94,22 @@ class WebLiveCapture {
       },
       'preferCurrentTab': false,
       'selfBrowserSurface': 'exclude',
-      'systemAudio': 'include',
+      'surfaceSwitching': 'include',
+      // No "Entire screen": with system audio it would capture Ampme's own
+      // playback and feed it back in (an echo that never ends).
+      'monitorTypeSurfaces': 'exclude',
+      'systemAudio': 'exclude',
     }.jsify()! as web.DisplayMediaStreamOptions;
     final stream = await web.window.navigator.mediaDevices.getDisplayMedia(options).toDart;
+    String? surface;
     for (final v in stream.getVideoTracks().toDart) {
+      try {
+        surface = (v.getSettings() as JSObject).getProperty<JSString?>('displaySurface'.toJS)?.toDart;
+      } catch (_) {}
       v.stop();
     }
     if (stream.getAudioTracks().toDart.isEmpty) {
-      throw StateError(
-        'No sound was shared. Pick a browser tab and turn on “Share tab audio”.',
-      );
+      throw StateError(noTabSoundMessage(surface));
     }
     final capture = WebLiveCapture._(ctx, stream);
     await capture._start();

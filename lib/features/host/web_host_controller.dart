@@ -190,6 +190,11 @@ class WebHostController extends ChangeNotifier {
   /// True once the shared tab's audio is playing on the shared timeline.
   bool get liveIsPlaying => _livePlayer?.isPlaying ?? false;
 
+  /// True while a shared tab has given only digital silence for ~3 s
+  /// (paused video, muted tab) — the UI says so.
+  bool liveSilent = false;
+  int _silentFrames = 0;
+
   /// Whether this browser can share a tab's audio at all.
   bool get canShareTab => canCaptureTabAudio;
 
@@ -625,6 +630,8 @@ class WebHostController extends ChangeNotifier {
       final ring = PcmRing(channels: LiveFrames.channels, sampleRate: rate, capacitySeconds: 30);
       _capture = capture;
       _liveRing = ring;
+      liveSilent = false;
+      _silentFrames = 0;
       _livePlayer = LivePcmPlayer(ctx, ring, destination: _gain)..volume = volume;
       capture.onEnded(() {
         if (identical(_capture, capture)) stopTabShare();
@@ -662,6 +669,7 @@ class WebHostController extends ChangeNotifier {
     final player = _livePlayer;
     final ctx = _ctx;
     if (ring == null || player == null || ctx == null || currentTrack != track) return;
+    _trackSilence(b, rate);
     if (player.startWallMs == null) {
       // Frame 0 was captured at this wall time; everyone hears it
       // [liveDelayMs] later.
@@ -678,6 +686,8 @@ class WebHostController extends ChangeNotifier {
         ),
       );
       _startReferenceTimer();
+      // The share card goes from "Starting…" to live.
+      _notify();
     }
     final pcm = LiveFrames.interleave([b.left, b.right]);
     ring.write(b.frame, pcm);
@@ -720,12 +730,30 @@ class WebHostController extends ChangeNotifier {
   }
 
   /// Stops sharing the tab; listeners stop too ([announce]).
+  void _trackSilence(CaptureBatch b, int rate) {
+    var loud = false;
+    for (var i = 0; i < b.left.length; i++) {
+      if (b.left[i].abs() > 1e-4 || b.right[i].abs() > 1e-4) {
+        loud = true;
+        break;
+      }
+    }
+    _silentFrames = loud ? 0 : _silentFrames + b.left.length;
+    final silent = _silentFrames > rate * 3;
+    if (silent != liveSilent) {
+      liveSilent = silent;
+      _notify();
+    }
+  }
+
   void stopTabShare({bool announce = true}) {
     final capture = _capture;
     if (capture == null) return;
     final track = currentTrack;
     final pos = _timelinePositionAt(_nowMs());
     _capture = null;
+    liveSilent = false;
+    _silentFrames = 0;
     unawaited(_captureSub?.cancel());
     _captureSub = null;
     capture.stop();
