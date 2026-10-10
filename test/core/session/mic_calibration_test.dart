@@ -54,6 +54,8 @@ class _Engine implements AudioEngine {
   @override
   Future<void> setVolume(double volume) async {}
   @override
+  Future<void> setSpeed(double speed) async {}
+  @override
   Duration get currentPosition => Duration.zero;
   @override
   Stream<Duration> get positionStream => const Stream.empty();

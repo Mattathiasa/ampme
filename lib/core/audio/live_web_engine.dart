@@ -110,6 +110,9 @@ class LiveWebEngine implements AudioEngine {
   Duration get currentPosition => estimatePositionAt(DateTime.now());
 
   @override
+  Future<void> setSpeed(double speed) async {} // live audio has no drift loop
+
+  @override
   Future<void> setVolume(double volume) async {
     _volume = volume;
     _player?.volume = volume;

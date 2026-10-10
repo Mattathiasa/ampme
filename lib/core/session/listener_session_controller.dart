@@ -87,6 +87,12 @@ class ListenerSessionController extends ChangeNotifier
   /// diagnosing drift on real devices and in CI.
   static const bool _syncLog = bool.fromEnvironment('AMPME_SYNC_LOG');
 
+  /// Drift up to this is trimmed with the playback rate; beyond it, seek.
+  static const int _trimMaxDriftMs = 120;
+
+  /// Largest rate change used for trimming (±3 %, pitch preserved).
+  static const double _maxTrim = 0.03;
+
   static const Duration _correctionSettleTime = Duration(milliseconds: 2000);
 
   /// Test hook: pretends the last drift correction happened [age] ago.
@@ -277,6 +283,7 @@ class ListenerSessionController extends ChangeNotifier
         hostIsPlaying = false;
         seekLeadMs = 0; // a different file seeks differently
         _lastCorrectionAt = null;
+        _trimSpeed = 1; // loading resets the player's rate
         currentTrack = TrackInfo.fromJson(message.payload);
         // Pre-buffer the new track from its start (the host loads tracks
         // paused at position 0) so a follow-up play command starts instantly.
@@ -537,6 +544,7 @@ class ListenerSessionController extends ChangeNotifier
     // The chirp goes through the music's own player (same output delay), so
     // the music on this device pauses for the few seconds this takes.
     await audioEngine.pause();
+    _setTrim(1); // the chirp must play at normal speed
     try {
       final results = <int>[];
       for (var run = 0; run < 3; run++) {
@@ -663,7 +671,10 @@ class ListenerSessionController extends ChangeNotifier
 
     // Only meaningful mid-playback; while buffering or paused a seek is
     // wasted (or would fight an in-flight scheduled start).
-    if (playbackState != PlaybackState.playing) return;
+    if (playbackState != PlaybackState.playing) {
+      _setTrim(1);
+      return;
+    }
     final offsetMs = _client?.clockEstimate?.offsetMs ?? 0;
     // Where the host's playhead is *right now*, on this device's clock.
     final hostNowOnClientClock = hostTimeMs - offsetMs;
@@ -681,31 +692,47 @@ class ListenerSessionController extends ChangeNotifier
           'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
           'lead=$seekLeadMs nudge=$syncNudgeMs $action');
     }
-    // The host re-broadcasts a measured reference every second, so a small
-    // correction here is cheap and frequent — chasing down to ~30ms keeps
-    // devices audibly locked while staying above the residual clock-estimate
-    // noise (a few ms on a LAN). The seek itself is tiny (≤1 frame at 30ms),
-    // so it isn't audible.
-    if (drift.abs() < 30) return trace('ok');
+    // The host re-broadcasts a measured reference every second. Within
+    // ~30 ms (above the residual clock-estimate noise) leave it alone.
+    if (drift.abs() < 30 && _trimSpeed == 1) return trace('ok');
 
     final now = DateTime.now();
     final last = _lastCorrectionAt;
-    if (last != null) {
-      final since = now.difference(last);
-      // Let the previous seek settle (rebuffer, fresh position updates)
-      // before judging it or seeking again: back-to-back seeks on a slow
-      // device starve the audio output and make the drift worse.
-      if (since < _correctionSettleTime) return trace('settling');
-      // Still off after a recent correction: it landed `drift` away from
-      // where it aimed. Move the aim 70 % of that way (damped, so noisy
-      // readings can't make it oscillate).
-      if (since < const Duration(seconds: 8)) {
-        seekLeadMs = (seekLeadMs - drift * 0.7).round().clamp(0, 400);
-      }
+    final since = last == null ? null : now.difference(last);
+    // Let a seek settle (rebuffer, fresh position updates) before judging
+    // it: back-to-back seeks on a slow device starve the audio output.
+    if (since != null && since < _correctionSettleTime) return trace('settling');
+
+    // Small drift: play a few percent fast or slow (pitch preserved) until
+    // it's gone. Seeks land tens to hundreds of ms off on many devices, so
+    // seeking at small drift just trades one error for another (and skips).
+    if (drift.abs() <= _trimMaxDriftMs) {
+      final speed = drift.abs() < 10
+          ? 1.0
+          : (1 - drift / 2000).clamp(1 - _maxTrim, 1 + _maxTrim).toDouble();
+      _setTrim(speed);
+      return trace(speed == 1 ? 'ok' : 'trim x${speed.toStringAsFixed(3)}');
+    }
+
+    // Large drift: seek. Still off after a recent seek means it landed
+    // `drift` away from where it aimed; move the aim 70 % of that way
+    // (damped, so noisy readings can't make it oscillate).
+    _setTrim(1);
+    if (since != null && since < const Duration(seconds: 8)) {
+      seekLeadMs = (seekLeadMs - drift * 0.7).round().clamp(0, 400);
     }
     _lastCorrectionAt = now;
     trace('seek');
     unawaited(audioEngine.seek(Duration(milliseconds: target + seekLeadMs)));
+  }
+
+  /// Current drift-trimming rate (1.0 = not trimming).
+  double _trimSpeed = 1;
+
+  void _setTrim(double speed) {
+    if (speed == _trimSpeed) return;
+    _trimSpeed = speed;
+    unawaited(audioEngine.setSpeed(speed));
   }
 
   void _sendStatus() {
