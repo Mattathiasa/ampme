@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../audio/audio_engine.dart';
 import '../audio/bytes_uri.dart';
 import '../audio/wav_writer.dart';
+import '../observability/reporting.dart';
 import 'acoustic_calibration.dart';
 
 /// Plays one calibration chirp through [engine] — on a listener, the very
@@ -37,6 +38,19 @@ class ChirpPlayer {
     );
     await _engine.loadUrl(uri, title: 'Calibration');
     await _engine.scheduleStart(at: at.subtract(const Duration(milliseconds: leadMs)));
+  }
+
+  /// Host side of a calibration: schedules chirp A [delay] from now and
+  /// returns that instant (ms since epoch, this device's clock) to send to
+  /// the listener. Playback failures are reported, never thrown.
+  int startHostChirp({Duration delay = const Duration(milliseconds: 1500)}) {
+    final at = DateTime.now().add(delay);
+    unawaited(
+      playAt(at, host: true).catchError((Object e, StackTrace st) {
+        reportError(e, st, context: 'host calibration chirp');
+      }),
+    );
+    return at.millisecondsSinceEpoch;
   }
 
   /// When the player says the chirp's first sample was audible, judged from

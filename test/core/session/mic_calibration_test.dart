@@ -10,6 +10,7 @@ import 'package:ampme/core/network/pipe_control_link.dart';
 import 'package:ampme/core/session/listener_session_controller.dart';
 import 'package:ampme/core/sync/acoustic_calibration.dart';
 import 'package:ampme/core/sync/calibration_mic.dart';
+import 'package:ampme/core/sync/chirp_player.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// A player that starts exactly when scheduled and reports honestly.
@@ -171,7 +172,7 @@ void main() {
     timeout: const Timeout(Duration(seconds: 30)),
   );
 
-  test('a phone host says it cannot play the chirp', () async {
+  test('an older host that cannot play the chirp says so', () async {
     final toListener = StreamController<String>();
     final session = ListenerSessionController(
       selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'android'),
@@ -193,8 +194,23 @@ void main() {
     );
     await expectLater(
       session.calibrateWithMic(),
-      throwsA(isA<CalibrationException>().having((e) => e.message, 'message', contains('web app'))),
+      throwsA(isA<CalibrationException>().having((e) => e.message, 'message', contains('older Ampme'))),
     );
     session.dispose();
+  });
+
+  test('a phone host schedules its chirp ahead and reports exactly when', () async {
+    final engine = _Engine();
+    final before = DateTime.now().millisecondsSinceEpoch;
+    final atMs = ChirpPlayer(engine).startHostChirp();
+    expect(atMs - before, inInclusiveRange(1490, 1600));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(engine.loaded, hasLength(1));
+    // The WAV starts with [leadMs] of silence, so playback starts that much
+    // earlier and the chirp itself sounds at atMs.
+    expect(
+      engine.scheduled.single.at.millisecondsSinceEpoch,
+      atMs - ChirpPlayer.leadMs,
+    );
   });
 }

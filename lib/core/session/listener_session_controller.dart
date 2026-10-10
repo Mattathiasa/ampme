@@ -87,6 +87,11 @@ class ListenerSessionController extends ChangeNotifier
   /// diagnosing drift on real devices and in CI.
   static const bool _syncLog = bool.fromEnvironment('AMPME_SYNC_LOG');
 
+  /// Trimming starts beyond this drift and stops below [_trimStopMs]. The
+  /// rate change at 12 ms is 0.6 % — inaudible — so the lock can be tight.
+  static const int _trimStartMs = 12;
+  static const int _trimStopMs = 5;
+
   /// Drift up to this is trimmed with the playback rate; beyond it, seek.
   static const int _trimMaxDriftMs = 120;
 
@@ -607,8 +612,8 @@ class ListenerSessionController extends ChangeNotifier
       );
       if (atHost == null) {
         throw const CalibrationException(
-          'Mic calibration needs the host to be the web app for now — use the '
-          'slider to line this device up by ear.',
+          'The host is on an older Ampme that can\'t play the test sound — '
+          'update it, or use the slider to line this device up by ear.',
         );
       }
       final offset = client.clockEstimate?.offsetMs ?? 0;
@@ -692,9 +697,10 @@ class ListenerSessionController extends ChangeNotifier
           'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
           'lead=$seekLeadMs nudge=$syncNudgeMs $action');
     }
-    // The host re-broadcasts a measured reference every second. Within
-    // ~30 ms (above the residual clock-estimate noise) leave it alone.
-    if (drift.abs() < 30 && _trimSpeed == 1) return trace('ok');
+    // The host re-broadcasts a measured reference every second. Start
+    // trimming beyond [_trimStartMs]; once trimming, keep going until under
+    // [_trimStopMs] (hysteresis, so reading noise can't toggle it).
+    if (drift.abs() < _trimStartMs && _trimSpeed == 1) return trace('ok');
 
     final now = DateTime.now();
     final last = _lastCorrectionAt;
@@ -707,7 +713,7 @@ class ListenerSessionController extends ChangeNotifier
     // it's gone. Seeks land tens to hundreds of ms off on many devices, so
     // seeking at small drift just trades one error for another (and skips).
     if (drift.abs() <= _trimMaxDriftMs) {
-      final speed = drift.abs() < 10
+      final speed = drift.abs() < _trimStopMs
           ? 1.0
           : (1 - drift / 2000).clamp(1 - _maxTrim, 1 + _maxTrim).toDouble();
       _setTrim(speed);
