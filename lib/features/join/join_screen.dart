@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/network/models/playback_state.dart';
 import '../../core/permissions/app_permissions.dart';
+import '../../core/session/sync_nudge_store.dart';
 import '../../utils/platform_info.dart';
 import '../../theme/amp_tokens.dart';
 import '../../ui/amp_button.dart';
@@ -192,10 +193,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
         // Shown in caps; the e2e and widget tests look for this exact text.
         Text(
           'Nearby sessions',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: tokens.textDim,
-            letterSpacing: 1.6,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: tokens.textDim, letterSpacing: 1.6),
         ),
         const SizedBox(height: 12),
         if (viewModel.nearbySessions.isEmpty)
@@ -386,6 +386,16 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
                   onVolumeChanged: viewModel.setVolume,
                 ),
         ),
+        if (track != null && !track.isLive) ...[
+          const SizedBox(height: 16),
+          _SyncNudgeCard(
+            nudgeMs: session.syncNudgeMs,
+            onChanged: viewModel.setSyncNudge,
+            calibrationRun: viewModel.calibrationRun,
+            calibrationMessage: viewModel.calibrationMessage,
+            onCalibrate: () => viewModel.calibrateWithMic(context: context),
+          ),
+        ],
         const SizedBox(height: 24),
         AmpButton(
           label: 'Leave session',
@@ -495,6 +505,113 @@ class _LiveListenerView extends StatelessWidget {
         const SizedBox(height: 6),
         VolumeRow(volume: volume, onChanged: onVolumeChanged),
       ],
+    );
+  }
+}
+
+/// Lets this device play a little earlier or later than the shared timeline,
+/// to cancel its own speaker delay (Bluetooth speakers, slow audio paths) —
+/// the drift loop then holds it there.
+class _SyncNudgeCard extends StatelessWidget {
+  const _SyncNudgeCard({
+    required this.nudgeMs,
+    required this.onChanged,
+    required this.onCalibrate,
+    this.calibrationRun,
+    this.calibrationMessage,
+  });
+
+  final int nudgeMs;
+  final ValueChanged<int> onChanged;
+  final VoidCallback onCalibrate;
+  final int? calibrationRun;
+  final String? calibrationMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = AmpTokens.of(context);
+    void step(int by) => onChanged((nudgeMs + by).clamp(minSyncNudgeMs, maxSyncNudgeMs));
+    final label = nudgeMs == 0
+        ? '0 ms'
+        : nudgeMs > 0
+        ? '$nudgeMs ms earlier'
+        : '${-nudgeMs} ms later';
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'THIS DEVICE',
+                  style: theme.textTheme.labelSmall?.copyWith(color: tokens.textDim),
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontFamily: AmpTokens.mono,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                  color: nudgeMs == 0 ? tokens.textDim : tokens.volt,
+                  fontFeatures: AmpTokens.tabular,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Sounds behind the others (an echo)? Move it earlier until the echo '
+            'disappears. Bluetooth speakers usually need 150–250 ms.',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
+          ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove_rounded),
+                tooltip: 'Later (10 ms)',
+                onPressed: nudgeMs > minSyncNudgeMs ? () => step(-10) : null,
+              ),
+              Expanded(
+                child: Slider(
+                  value: nudgeMs.toDouble(),
+                  min: minSyncNudgeMs.toDouble(),
+                  max: maxSyncNudgeMs.toDouble(),
+                  divisions: (maxSyncNudgeMs - minSyncNudgeMs) ~/ 10,
+                  label: label,
+                  onChanged: (v) => onChanged(v.round()),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_rounded),
+                tooltip: 'Earlier (10 ms)',
+                onPressed: nudgeMs < maxSyncNudgeMs ? () => step(10) : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          AmpButton(
+            label: calibrationRun == null
+                ? 'Calibrate with mic'
+                : 'Listening… ${calibrationRun! + 1} of 3',
+            icon: Icons.mic_rounded,
+            kind: AmpButtonKind.ghost,
+            onPressed: calibrationRun == null ? onCalibrate : null,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            calibrationMessage ??
+                'Hold this device near the others; you’ll hear a few blips. '
+                    'Its music pauses for a moment while it measures.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: calibrationMessage == null ? tokens.textDim : tokens.volt,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

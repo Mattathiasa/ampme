@@ -10,14 +10,12 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Microphone: "amplify the room" live broadcast (host captures mic audio). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
-    <!-- Notifications (Android 13+): the media playback notification from
-         just_audio_background is invisible without this permission. -->
+    <!-- Notifications (Android 13+): the system-audio capture service's
+         foreground notification is invisible without this permission. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-    <!-- just_audio_background: keep playback (and sync) alive with the screen off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <!-- MediaProjection: "broadcast device audio" — capture audio other apps
          are playing (Android 14+ requires this dedicated FGS permission). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
@@ -54,23 +52,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- just_audio_background foreground service + media button receiver. -->
-        <service
-            android:name="com.ryanheise.audioservice.AudioService"
-            android:foregroundServiceType="mediaPlayback"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService" />
-            </intent-filter>
-        </service>
-        <receiver
-            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
 
         <!-- Foreground service that captures system audio (other apps'
              output) via MediaProjection and streams it to the Flutter side.

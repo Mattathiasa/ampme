@@ -20,6 +20,7 @@ import '../network/models/playback_state.dart';
 import '../network/models/session_beacon.dart';
 import '../network/models/track_info.dart';
 import '../network/network_utils.dart';
+import '../sync/report_time.dart';
 import '../../utils/id_generator.dart';
 
 /// How far into the future a `play`/`seek` command's target start time is
@@ -490,12 +491,27 @@ class HostSessionController extends ChangeNotifier {
           // Keep the listener locked to the host's playhead: listeners report
           // their position every 2s, so if theirs has drifted we can send a
           // precise reference right now instead of waiting for a user action.
-          _maybeCorrectListenerDrift(incoming.deviceId, status.positionMs);
+          _maybeCorrectListenerDrift(
+            incoming.deviceId,
+            status.positionMs,
+            reportTimeMs(
+              status.roundTripMs,
+              DateTime.now().millisecondsSinceEpoch,
+              message.payload['sentAtHostMs'] as int?,
+            ),
+          );
           notifyListeners();
         case ControlMessageType.ready:
           // Counted only while a prepare handshake is in flight, so stale
           // acks from a previous command can't satisfy the current wait.
           if (_awaitingReadyAcks) _readyAcks.add(incoming.deviceId);
+        case ControlMessageType.calibrate:
+          // A phone host doesn't mix a chirp into the music yet; answer
+          // with no time so the listener says so.
+          _controlServer.sendTo(
+            incoming.deviceId,
+            ControlMessage.calibrate(senderId: hostDevice.deviceId),
+          );
         default:
           break;
       }
@@ -582,7 +598,7 @@ class HostSessionController extends ChangeNotifier {
   /// re-anchor. Only meaningful while the host is playing a file track (live
   /// broadcasts have no position to correct to) and only when the deviation
   /// is real, so we don't chase per-sample jitter.
-  void _maybeCorrectListenerDrift(String deviceId, int listenerPositionMs) {
+  void _maybeCorrectListenerDrift(String deviceId, int listenerPositionMs, int reportedAtMs) {
     if (playbackState != PlaybackState.playing) return;
     final track = currentTrack;
     if (track == null || track.isLive) return;
@@ -590,8 +606,12 @@ class HostSessionController extends ChangeNotifier {
     // Interpolate to now on both sides: the listener's report is up to a
     // poll interval old, and our own getter would be too — comparing two
     // stale values is what makes drift detection chase quantization noise.
-    final hostPositionMs = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
-    final drift = listenerPositionMs - hostPositionMs;
+    final now = DateTime.now();
+    final hostPositionMs = audioEngine.estimatePositionAt(now).inMilliseconds;
+    // Compare against where we were when the listener measured its position,
+    // not now: the report took a while to arrive.
+    final drift = listenerPositionMs -
+        (hostPositionMs - (now.millisecondsSinceEpoch - reportedAtMs));
     if (drift.abs() < _maxDriftMs) return;
 
     _controlServer.sendTo(
@@ -655,10 +675,8 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> _disposeAsync() async {
-    // Release the audio engine first: just_audio_background supports a single
-    // player instance, so if a follow-up screen (e.g. joining a session right
-    // after leaving host) creates its player before this one is disposed, the
-    // old player must already be gone.
+    // Release the audio engine promptly so a follow-up screen (e.g. joining a
+    // session right after leaving host) doesn't run two players at once.
     _stopPositionSyncTimer();
     await _positionSub?.cancel();
     await _stateSub?.cancel();

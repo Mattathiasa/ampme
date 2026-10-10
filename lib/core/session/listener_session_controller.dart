@@ -8,6 +8,10 @@ import '../observability/reporting.dart';
 import '../network/control_client.dart';
 import '../network/control_link.dart';
 import 'active_session.dart';
+import 'sync_nudge_store.dart';
+import '../sync/acoustic_calibration.dart';
+import '../sync/calibration_mic.dart';
+import '../sync/chirp_player.dart';
 import '../network/models/control_message.dart';
 import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
@@ -41,7 +45,16 @@ class ListenerSessionController extends ChangeNotifier
     required this.selfDevice,
     AudioEngine? audioEngine,
     this.trackResolver,
-  }) : audioEngine = audioEngine ?? JustAudioEngine();
+    CalibrationMic Function()? micFactory,
+  })  : audioEngine = audioEngine ?? JustAudioEngine(),
+        _micFactory = micFactory ?? RecordCalibrationMic.new;
+
+  final CalibrationMic Function() _micFactory;
+  Completer<int?>? _calibrationReply;
+
+  /// The host's latest timeline reference (position at host time), so
+  /// playback can resume in sync after a calibration borrowed the player.
+  ({int positionMs, int hostTimeMs})? _lastHostReference;
 
   final DeviceInfo selfDevice;
   final AudioEngine audioEngine;
@@ -58,7 +71,28 @@ class ListenerSessionController extends ChangeNotifier
   /// file (decoder restart from a keyframe) or on a slow device takes a
   /// while, and without this every correction lands late by that much.
   int seekLeadMs = 0;
+
+  /// This device's speaker delay compensation (see [ActiveSession.syncNudgeMs]):
+  /// every target position is shifted this far ahead.
+  @override
+  int syncNudgeMs = 0;
+
+  @override
+  void setSyncNudge(int ms) {
+    syncNudgeMs = ms.clamp(minSyncNudgeMs, maxSyncNudgeMs);
+    notifyListeners();
+  }
   DateTime? _lastCorrectionAt;
+  /// Logs every sync reference (`--dart-define=AMPME_SYNC_LOG=true`), for
+  /// diagnosing drift on real devices and in CI.
+  static const bool _syncLog = bool.fromEnvironment('AMPME_SYNC_LOG');
+
+  /// Drift up to this is trimmed with the playback rate; beyond it, seek.
+  static const int _trimMaxDriftMs = 120;
+
+  /// Largest rate change used for trimming (±3 %, pitch preserved).
+  static const double _maxTrim = 0.03;
+
   static const Duration _correctionSettleTime = Duration(milliseconds: 2000);
 
   /// Test hook: pretends the last drift correction happened [age] ago.
@@ -249,6 +283,7 @@ class ListenerSessionController extends ChangeNotifier
         hostIsPlaying = false;
         seekLeadMs = 0; // a different file seeks differently
         _lastCorrectionAt = null;
+        _trimSpeed = 1; // loading resets the player's rate
         currentTrack = TrackInfo.fromJson(message.payload);
         // Pre-buffer the new track from its start (the host loads tracks
         // paused at position 0) so a follow-up play command starts instantly.
@@ -271,6 +306,12 @@ class ListenerSessionController extends ChangeNotifier
         break;
       case ControlMessageType.sessionEnded:
         _handleHostGone();
+      case ControlMessageType.calibrate:
+        // A time, or no time: a host that can't play the chirp (phone hosts).
+        final reply = _calibrationReply;
+        if (reply != null && !reply.isCompleted) {
+          reply.complete(message.payload['chirpAtHostTimeMs'] as int?);
+        }
       case ControlMessageType.ready:
       case ControlMessageType.clockSyncRequest:
       case ControlMessageType.clockSyncResponse:
@@ -345,7 +386,9 @@ class ListenerSessionController extends ChangeNotifier
       // offset is exactly how a late joiner lands a second off.
       _client?.syncNow();
       await _waitForFreshSyncSamples();
-      final joinPosition = _estimateHostPositionNow(hostPositionMs, hostTimeMs);
+      final joinPosition =
+          _estimateHostPositionNow(hostPositionMs, hostTimeMs) +
+              Duration(milliseconds: syncNudgeMs);
       await _loadCurrentTrack(preBufferAt: joinPosition);
       if (playbackStateJson == 'playing' && !track.isLive) {
         final startAt = DateTime.now().add(_scheduleLeadTime);
@@ -464,6 +507,7 @@ class ListenerSessionController extends ChangeNotifier
 
       final positionMs = message.payload['positionMs'] as int;
       final startAtHostTimeMs = message.payload['startAtHostTimeMs'] as int;
+      _lastHostReference = (positionMs: positionMs, hostTimeMs: startAtHostTimeMs);
       // offsetMs == hostTime - clientTime, so hostTime -> clientTime is
       // startAtHostTimeMs - offsetMs.
       final localTarget = DateTime.fromMillisecondsSinceEpoch(
@@ -479,61 +523,216 @@ class ListenerSessionController extends ChangeNotifier
 
       await audioEngine.scheduleStart(
         at: localTarget,
-        position: Duration(milliseconds: positionMs),
+        position: Duration(milliseconds: _nudged(positionMs)),
       );
     } catch (e, st) {
       reportError(e, st, context: 'schedulePlayback');
     }
   }
 
+  /// Measures how late this device's speaker sounds compared with the
+  /// host's, with this device's mic (see [AcousticCalibration]), and sets the
+  /// sync nudge to cancel it. Three runs, median. Returns the new nudge.
+  ///
+  /// Throws [CalibrationException] with a user-facing reason on failure.
+  @override
+  Future<int> calibrateWithMic({void Function(int run)? onRun}) async {
+    final client = _client;
+    if (client == null) throw const CalibrationException('Not connected to the host.');
+    final track = currentTrack;
+    final wasPlaying = hostIsPlaying && track != null && !track.isLive;
+    // The chirp goes through the music's own player (same output delay), so
+    // the music on this device pauses for the few seconds this takes.
+    await audioEngine.pause();
+    _setTrim(1); // the chirp must play at normal speed
+    try {
+      final results = <int>[];
+      for (var run = 0; run < 3; run++) {
+        onRun?.call(run);
+        results.add(await _calibrateOnce(client));
+      }
+      final nudge = AcousticCalibration.median(results);
+      if (nudge.abs() > 600) {
+        throw const CalibrationException(
+          'The measurement didn’t make sense — try again somewhere quieter.',
+        );
+      }
+      setSyncNudge(nudge);
+      return syncNudgeMs;
+    } finally {
+      // With the new nudge (or the old one if this failed).
+      await _resumeAfterCalibration(track, wasPlaying);
+    }
+  }
+
+  /// Puts the song back in the player and rejoins the host's timeline.
+  Future<void> _resumeAfterCalibration(TrackInfo? track, bool wasPlaying) async {
+    if (track == null || currentTrack?.trackId != track.trackId) return;
+    final ref = _lastHostReference;
+    final offset = _client?.clockEstimate?.offsetMs ?? 0;
+    int hostPositionNow() {
+      if (ref == null) return position.inMilliseconds;
+      final elapsed = DateTime.now().millisecondsSinceEpoch - (ref.hostTimeMs - offset);
+      return ref.positionMs + (elapsed > 0 ? elapsed : 0);
+    }
+
+    await _loadCurrentTrack(
+      preBufferAt: Duration(milliseconds: _nudged(hostPositionNow())),
+    );
+    if (!wasPlaying || !hostIsPlaying) return;
+    final startAt = DateTime.now().add(_scheduleLeadTime);
+    await audioEngine.scheduleStart(
+      at: startAt,
+      position: Duration(
+        milliseconds: _nudged(hostPositionNow() + _scheduleLeadTime.inMilliseconds),
+      ),
+    );
+  }
+
+  Future<int> _calibrateOnce(ControlLink client) async {
+    const rate = CalibrationMic.sampleRate;
+    final mic = _micFactory();
+    final chirp = ChirpPlayer(audioEngine);
+    var recording = false;
+    try {
+      await mic.start();
+      recording = true;
+      final reply = _calibrationReply = Completer<int?>();
+      client.send(ControlMessage.calibrate(senderId: selfDevice.deviceId));
+      final atHost = await reply.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => throw const CalibrationException(
+          'The host didn’t answer — it may need the latest Ampme version.',
+        ),
+      );
+      if (atHost == null) {
+        throw const CalibrationException(
+          'Mic calibration needs the host to be the web app for now — use the '
+          'slider to line this device up by ear.',
+        );
+      }
+      final offset = client.clockEstimate?.offsetMs ?? 0;
+      // The host's chirp (A) is due at [hostAt] on our clock; ours (B) 700 ms
+      // later, through our own player.
+      final hostAt = DateTime.fromMillisecondsSinceEpoch(atHost - offset);
+      await chirp.playAt(hostAt.add(const Duration(milliseconds: 700)), host: false);
+      await _until(hostAt.add(const Duration(milliseconds: 900)));
+      final reportedB = chirp.reportedChirpTime(DateTime.now());
+      await _until(hostAt.add(const Duration(milliseconds: 1400)));
+      recording = false;
+      final rec = await mic.stop();
+      if (reportedB == null) {
+        throw const CalibrationException('This device couldn’t play its test sound.');
+      }
+      final heardA = AcousticCalibration.find(rec, AcousticCalibration.chirp(rate, up: true));
+      if (heardA == null) {
+        throw const CalibrationException(
+          'Couldn’t hear the host’s test sound — turn the host up or move closer.',
+        );
+      }
+      final heardB = AcousticCalibration.find(rec, AcousticCalibration.chirp(rate, up: false));
+      if (heardB == null) {
+        throw const CalibrationException('Couldn’t hear this device’s own test sound — turn it up.');
+      }
+      return AcousticCalibration.nudgeMs(
+        heardA: heardA,
+        heardB: heardB,
+        sampleRate: rate,
+        expectedGapMs: reportedB.difference(hostAt).inMicroseconds / 1000,
+      );
+    } finally {
+      _calibrationReply = null;
+      if (recording) unawaited(mic.stop().catchError((Object _) => Float32List(0)));
+    }
+  }
+
+  static Future<void> _until(DateTime t) async {
+    final wait = t.difference(DateTime.now());
+    if (wait > Duration.zero) await Future<void>.delayed(wait);
+  }
+
+  /// [timelineMs] shifted by this device's nudge (never before the start).
+  int _nudged(int timelineMs) {
+    final v = timelineMs + syncNudgeMs;
+    return v < 0 ? 0 : v;
+  }
+
   /// Re-anchors this device's playhead on a precise reference the host sent
   /// because this device's periodically-reported position had drifted out of
   /// sync.
   void _handlePositionSync(ControlMessage message) {
-    // Only meaningful mid-playback; while buffering or paused a seek is
-    // wasted (or would fight an in-flight scheduled start).
-    if (playbackState != PlaybackState.playing) return;
     final track = currentTrack;
     if (track == null || track.isLive) return;
     final messageTrackId = message.payload['trackId'] as String?;
     if (messageTrackId != track.trackId) return;
-
     final hostPositionMs = message.payload['positionMs'] as int;
     final hostTimeMs = message.payload['hostTimeMs'] as int;
+    _lastHostReference = (positionMs: hostPositionMs, hostTimeMs: hostTimeMs);
+
+    // Only meaningful mid-playback; while buffering or paused a seek is
+    // wasted (or would fight an in-flight scheduled start).
+    if (playbackState != PlaybackState.playing) {
+      _setTrim(1);
+      return;
+    }
     final offsetMs = _client?.clockEstimate?.offsetMs ?? 0;
     // Where the host's playhead is *right now*, on this device's clock.
     final hostNowOnClientClock = hostTimeMs - offsetMs;
     final elapsed = DateTime.now().millisecondsSinceEpoch - hostNowOnClientClock;
-    final target = hostPositionMs + (elapsed > 0 ? elapsed : 0);
+    final target = _nudged(hostPositionMs + (elapsed > 0 ? elapsed : 0));
 
     // Measure against an interpolated position, not the raw getter — the
     // platform only refreshes positions on a coarse grid, and comparing two
     // stale values would make this loop chase up to ~250ms of fake drift.
-    final drift = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds - target;
-    // The host re-broadcasts a measured reference every second, so a small
-    // correction here is cheap and frequent — chasing down to ~30ms keeps
-    // devices audibly locked while staying above the residual clock-estimate
-    // noise (a few ms on a LAN). The seek itself is tiny (≤1 frame at 30ms),
-    // so it isn't audible.
-    if (drift.abs() < 30) return;
+    final estimate = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
+    final drift = estimate - target;
+    void trace(String action) {
+      if (!_syncLog) return;
+      debugPrint('[sync] drift=$drift target=$target est=$estimate '
+          'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
+          'lead=$seekLeadMs nudge=$syncNudgeMs $action');
+    }
+    // The host re-broadcasts a measured reference every second. Within
+    // ~30 ms (above the residual clock-estimate noise) leave it alone.
+    if (drift.abs() < 30 && _trimSpeed == 1) return trace('ok');
 
     final now = DateTime.now();
     final last = _lastCorrectionAt;
-    if (last != null) {
-      final since = now.difference(last);
-      // Let the previous seek settle (rebuffer, fresh position updates)
-      // before judging it or seeking again: back-to-back seeks on a slow
-      // device starve the audio output and make the drift worse.
-      if (since < _correctionSettleTime) return;
-      // Still off after a recent correction: it landed `drift` away from
-      // where it aimed. Move the aim 70 % of that way (damped, so noisy
-      // readings can't make it oscillate).
-      if (since < const Duration(seconds: 8)) {
-        seekLeadMs = (seekLeadMs - drift * 0.7).round().clamp(0, 400);
-      }
+    final since = last == null ? null : now.difference(last);
+    // Let a seek settle (rebuffer, fresh position updates) before judging
+    // it: back-to-back seeks on a slow device starve the audio output.
+    if (since != null && since < _correctionSettleTime) return trace('settling');
+
+    // Small drift: play a few percent fast or slow (pitch preserved) until
+    // it's gone. Seeks land tens to hundreds of ms off on many devices, so
+    // seeking at small drift just trades one error for another (and skips).
+    if (drift.abs() <= _trimMaxDriftMs) {
+      final speed = drift.abs() < 10
+          ? 1.0
+          : (1 - drift / 2000).clamp(1 - _maxTrim, 1 + _maxTrim).toDouble();
+      _setTrim(speed);
+      return trace(speed == 1 ? 'ok' : 'trim x${speed.toStringAsFixed(3)}');
+    }
+
+    // Large drift: seek. Still off after a recent seek means it landed
+    // `drift` away from where it aimed; move the aim 70 % of that way
+    // (damped, so noisy readings can't make it oscillate).
+    _setTrim(1);
+    if (since != null && since < const Duration(seconds: 8)) {
+      seekLeadMs = (seekLeadMs - drift * 0.7).round().clamp(0, 400);
     }
     _lastCorrectionAt = now;
+    trace('seek');
     unawaited(audioEngine.seek(Duration(milliseconds: target + seekLeadMs)));
+  }
+
+  /// Current drift-trimming rate (1.0 = not trimming).
+  double _trimSpeed = 1;
+
+  void _setTrim(double speed) {
+    if (speed == _trimSpeed) return;
+    _trimSpeed = speed;
+    unawaited(audioEngine.setSpeed(speed));
   }
 
   void _sendStatus() {
@@ -545,6 +744,7 @@ class ListenerSessionController extends ChangeNotifier
       clockOffsetMs = estimate.offsetMs;
       roundTripMs = estimate.roundTripMs;
     }
+    final now = DateTime.now();
     _client?.send(
       ControlMessage.listenerStatusUpdate(
         senderId: selfDevice.deviceId,
@@ -553,9 +753,17 @@ class ListenerSessionController extends ChangeNotifier
         // Report an interpolated position: the host compares this against its
         // own playhead to detect drift, and a raw polled value would be up to
         // a poll interval old by the time it's compared.
-        positionMs: audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds,
+        // Minus the nudge: the host compares against the shared timeline, and
+        // a deliberate lead isn't drift.
+        positionMs: audioEngine.estimatePositionAt(now).inMilliseconds - syncNudgeMs,
         syncOffsetMs: clockOffsetMs ?? 0,
         roundTripMs: roundTripMs ?? 0,
+        // The instant that position belongs to, on the host's clock: the host
+        // compares against its own timeline at exactly that instant instead
+        // of guessing the delivery delay (any queueing read as "behind").
+        sentAtHostMs: estimate == null
+            ? null
+            : now.millisecondsSinceEpoch + estimate.offsetMs,
       ),
     );
   }
@@ -580,9 +788,8 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   Future<void> _disposeAsync() async {
-    // Release the audio engine first: just_audio_background supports a single
-    // player instance, so if the user quickly hosts again or joins, the old
-    // player must already be gone before a new one is created.
+    // Release the audio engine promptly so hosting again or re-joining
+    // doesn't run two players at once.
     _statusTimer?.cancel();
     await _positionSub?.cancel();
     await _stateSub?.cancel();

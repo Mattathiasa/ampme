@@ -74,8 +74,8 @@ jobs:
             echo "KEY_ALIAS=$KEY_ALIAS"
             echo "KEY_PASSWORD=$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
-      - run: flutter build apk --release --split-per-abi
-      - run: flutter build apk --release
+      - run: flutter build apk --release --split-per-abi --dart-define=AMPME_SYNC_LOG=true
+      - run: flutter build apk --release --dart-define=AMPME_SYNC_LOG=true
       - name: Collect APKs
         run: |
           mkdir -p apks
@@ -201,12 +201,14 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — a whole new look: one room, one beat.
+          **Ampme v$VERSION** — tighter sync, full-screen video, MKV and working tab sound.
 
-          - **Redesigned app, web app and website:** a new "Electric Club" look — volt-on-ink (with a light mode), bold type, a live visualizer, per-device sync rings, a big tile-style join code, smoother transitions and haptics.
-          - **Share a browser tab (YouTube…):** on the web host (Chrome/Edge on a computer), share a tab and every device — the host included — plays its sound together, 1 s behind the tab.
-          - **Videos, from the web or the Android app:** pick a video on the host; it shows the picture and every other device plays the sound in sync (phones get the sound only, not the whole video).
-          - **Real sync for web-hosted sessions:** every device plays its own copy, started at the same instant, with drift correction every second.
+          - **Steadier sync:** listeners now close small drift by playing a touch faster or slower instead of skipping (which on some phones kept overshooting), and the host's per-device sync readout no longer mistakes network delay for lag.
+          - **Sync nudge + "Calibrate with mic":** if a phone sounds behind (or ahead of) the host — Bluetooth speakers especially — open its now-playing card and nudge it, or tap **Calibrate with mic** (web-hosted sessions) to have it measured with the microphone. The setting is saved per device.
+          - **Full-screen video:** a full-screen button (or double-tap) on the host's picture, on the web and on Android (immersive landscape); the picture stays in sync.
+          - **MKV and Dolby/DTS videos on the web host:** when the browser can't read a video's sound, a converter (~32 MB, downloaded once) turns it into something every device can play.
+          - **Faster, more reliable app start on Android:** a hidden duplicate copy of the app no longer starts alongside it.
+          - **Sharing a YouTube tab now carries its sound:** the picker opens on browser tabs, and if no sound comes through you get a clear message saying why.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 

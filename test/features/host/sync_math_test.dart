@@ -33,6 +33,40 @@ void main() {
     );
   });
 
+  test('a stamped report is compared at its own send time, however late', () {
+    int host(int wall) => wall - 1000;
+    // Measured 9000 at host wall 10000 but queued: arrives at 10300 although
+    // the round trip is only 20 ms. Not "behind".
+    expect(
+      listenerDriftMs(
+        listenerPositionMs: 9000,
+        roundTripMs: 20,
+        receivedAtMs: 10300,
+        sentAtHostMs: 10000,
+        hostPositionAt: host,
+      ),
+      0,
+    );
+    // Without the stamp the same report reads as 290 ms behind.
+    expect(
+      listenerDriftMs(
+        listenerPositionMs: 9000,
+        roundTripMs: 20,
+        receivedAtMs: 10300,
+        hostPositionAt: host,
+      ),
+      -290,
+    );
+  });
+
+  test('implausible stamps fall back to half a round trip', () {
+    expect(reportTimeMs(200, 10100, null), 10000);
+    expect(reportTimeMs(200, 10100, 10090), 10090);
+    expect(reportTimeMs(200, 10100, 10120), 10120); // offset error: still used
+    expect(reportTimeMs(200, 10100, 3000), 10000);
+    expect(reportTimeMs(200, 10100, 99999), 10000);
+  });
+
   test('video follows the audio: rate nudges for small drift, seek for large', () {
     expect(videoCorrection(10), (seek: false, rate: 1.0));
     expect(videoCorrection(100).rate, lessThan(1.0));

@@ -2,6 +2,10 @@
 /// of browser APIs so they can be unit-tested).
 library;
 
+import '../../core/sync/report_time.dart';
+
+export '../../core/sync/report_time.dart';
+
 /// Shortest gap between deciding to start and the scheduled start instant.
 const int minStartLeadMs = 500;
 
@@ -24,17 +28,19 @@ int startLeadMs(Iterable<int> roundTripsMs) {
 /// How far a listener's playhead is from the host's timeline (ms; positive
 /// means the listener is ahead).
 ///
-/// [listenerPositionMs] was measured when the listener sent its report,
-/// roughly half a round trip before [receivedAtMs] on the host clock.
+/// [listenerPositionMs] was measured at [sentAtHostMs] (host clock), which
+/// newer listeners report. Older ones don't; their report is assumed to be
+/// half a round trip old, which reads any extra delivery delay as lag.
 /// [hostPositionAt] gives the host timeline position at a host wall time.
 int listenerDriftMs({
   required int listenerPositionMs,
   required int roundTripMs,
   required int receivedAtMs,
   required int Function(int hostWallMs) hostPositionAt,
+  int? sentAtHostMs,
 }) {
-  final sentAt = receivedAtMs - roundTripMs ~/ 2;
-  return listenerPositionMs - hostPositionAt(sentAt);
+  return listenerPositionMs -
+      hostPositionAt(reportTimeMs(roundTripMs, receivedAtMs, sentAtHostMs));
 }
 
 /// How the host's `<video>` should follow the audio timeline, given how far

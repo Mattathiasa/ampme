@@ -63,6 +63,10 @@ abstract class AudioEngine {
 
   Future<void> setVolume(double volume);
 
+  /// Playback rate (1.0 = normal), pitch preserved. Listeners trim small
+  /// drift with a rate a few percent off 1.0 instead of seeking.
+  Future<void> setSpeed(double speed);
+
   Stream<Duration> get positionStream;
 
   Stream<PlaybackState> get stateStream;

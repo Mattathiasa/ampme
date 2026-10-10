@@ -67,6 +67,9 @@ class SwitchingAudioEngine implements AudioEngine {
   @override
   Duration estimatePositionAt(DateTime t) => _active.estimatePositionAt(t);
   @override
+  Future<void> setSpeed(double speed) => files.setSpeed(speed);
+
+  @override
   Future<void> setVolume(double volume) async {
     await files.setVolume(volume);
     await live.setVolume(volume);

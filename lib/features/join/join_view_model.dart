@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../../core/network/discovery/session_scanner.dart';
 import '../../core/network/models/device_info.dart';
@@ -10,6 +13,8 @@ import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
 import '../../core/session/listener_session_controller.dart';
+import '../../core/session/sync_nudge_store.dart';
+import '../../core/sync/acoustic_calibration.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../utils/join_code.dart';
@@ -163,6 +168,7 @@ class JoinViewModel extends ChangeNotifier {
       controller.addListener(notifyListeners);
       await controller.connect(signaling);
       session = controller;
+      controller.setSyncNudge(await SyncNudgeStore.load());
     } on SignalingException catch (e) {
       controller?.removeListener(notifyListeners);
       controller?.dispose();
@@ -190,6 +196,7 @@ class JoinViewModel extends ChangeNotifier {
       controller.addListener(notifyListeners);
       await controller.connect(hostIp: hostIp, controlPort: controlPort);
       session = controller;
+      controller.setSyncNudge(await SyncNudgeStore.load());
     } catch (e, st) {
       errorMessage = 'Failed to join session: $e';
       reportError(e, st, context: 'joinSession');
@@ -201,6 +208,59 @@ class JoinViewModel extends ChangeNotifier {
 
   /// Sets this device's local playback volume (per-device, doesn't affect the
   /// host or other listeners).
+  /// Mic calibration progress: the run in progress (0-2), or null.
+  int? calibrationRun;
+
+  /// The outcome of the last calibration, for the UI.
+  String? calibrationMessage;
+
+  /// Measures this device's speaker delay with the mic and sets the nudge.
+  Future<void> calibrateWithMic({BuildContext? context}) async {
+    final s = session;
+    if (s == null || calibrationRun != null) return;
+    final granted = await AppPermissions.requestMicrophoneAccess(
+      context: context,
+      title: 'Microphone access is needed',
+      message: 'Ampme listens for two short test sounds to measure how late '
+          'this device plays. Nothing is recorded or sent anywhere.',
+    );
+    if (!granted) {
+      calibrationMessage = 'Calibration needs the microphone.';
+      notifyListeners();
+      return;
+    }
+    calibrationRun = 0;
+    calibrationMessage = null;
+    notifyListeners();
+    try {
+      final nudge = await s.calibrateWithMic(onRun: (run) {
+        calibrationRun = run;
+        notifyListeners();
+      });
+      unawaited(SyncNudgeStore.save(nudge));
+      calibrationMessage = nudge == 0
+          ? 'Measured: this device is already in step.'
+          : 'Measured: this device sounded ${nudge.abs()} ms '
+              '${nudge > 0 ? 'late' : 'early'} — corrected.';
+    } on CalibrationException catch (e) {
+      calibrationMessage = e.message;
+    } catch (e, st) {
+      calibrationMessage = 'Calibration failed: $e';
+      reportError(e, st, context: 'calibrateWithMic');
+    } finally {
+      calibrationRun = null;
+      notifyListeners();
+    }
+  }
+
+  /// Shifts this device earlier/later to match the room by ear; remembered.
+  void setSyncNudge(int ms) {
+    final s = session;
+    if (s == null) return;
+    s.setSyncNudge(ms);
+    unawaited(SyncNudgeStore.save(s.syncNudgeMs));
+  }
+
   Future<void> setVolume(double value) async {
     await session?.setLocalVolume(value);
   }

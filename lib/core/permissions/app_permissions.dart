@@ -105,8 +105,8 @@ class AppPermissions {
     return status.isGranted;
   }
 
-  /// Notification access (Android 13+), so the media playback notification
-  /// from just_audio_background is actually visible. Older Android versions
+  /// Notification access (Android 13+), so the system-audio capture
+  /// service's foreground notification is actually visible. Older Android versions
   /// don't have this permission; permission_handler reports it as
   /// unavailable there, so treat that as success.
   static Future<bool> requestNotificationAccess() async {

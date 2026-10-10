@@ -52,6 +52,19 @@ abstract class ActiveSession extends ChangeNotifier {
   /// Sets this device's local playback volume without affecting other devices.
   Future<void> setLocalVolume(double value);
 
+  /// How much earlier (ms) this device plays than the shared timeline, to
+  /// make up for its own speaker delay. Set by ear or by mic calibration.
+  int get syncNudgeMs;
+
+  /// Sets [syncNudgeMs]; takes effect at the next drift check (≤ 1 s).
+  void setSyncNudge(int ms);
+
+  /// Measures this device's speaker delay against the host's with the mic
+  /// and sets [syncNudgeMs] from it (three runs, median). [onRun] reports
+  /// progress (0, 1, 2). Throws `CalibrationException` with a user-facing
+  /// reason on failure.
+  Future<int> calibrateWithMic({void Function(int run)? onRun});
+
   /// Fraction (0..1) of the current song still being copied to this device
   /// (browser-hosted sessions send the file before playing); null otherwise.
   double? get trackDownloadProgress;

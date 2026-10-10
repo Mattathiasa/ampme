@@ -14,11 +14,13 @@ import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
+import '../../core/sync/acoustic_calibration.dart';
 import '../../utils/id_generator.dart';
 import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
 import '../../core/network/live_frames.dart';
 import 'audio_extract.dart';
+import 'ffmpeg_audio.dart';
 import 'sync_math.dart';
 import 'web_live_capture.dart';
 
@@ -176,6 +178,13 @@ class WebHostController extends ChangeNotifier {
   /// 0..1 while a video's sound is being prepared for the phones.
   double? preparingSoundProgress;
 
+  /// What the "preparing" progress is about, when it isn't the usual
+  /// encode for the phones (e.g. downloading the audio converter).
+  String? preparingSoundNote;
+
+  /// True when this browser couldn't show the current video's picture.
+  bool videoFailed = false;
+
   // ---- Shared tab (live capture) ----
   WebLiveCapture? _capture;
   PcmRing? _liveRing;
@@ -188,6 +197,11 @@ class WebHostController extends ChangeNotifier {
 
   /// True once the shared tab's audio is playing on the shared timeline.
   bool get liveIsPlaying => _livePlayer?.isPlaying ?? false;
+
+  /// True while a shared tab has given only digital silence for ~3 s
+  /// (paused video, muted tab) — the UI says so.
+  bool liveSilent = false;
+  int _silentFrames = 0;
 
   /// Whether this browser can share a tab's audio at all.
   bool get canShareTab => canCaptureTabAudio;
@@ -331,10 +345,7 @@ class WebHostController extends ChangeNotifier {
     if (isSharingTab) stopTabShare();
     try {
       final ctx = _ctx ??= web.AudioContext();
-      // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
-      // and the original bytes still have to be sent to listeners.
-      final copy = Uint8List.fromList(bytes);
-      final buffer = await ctx.decodeAudioData(copy.buffer.toJS).toDart;
+      final buffer = await _decodeSound(ctx, bytes, fileName);
       _stopSource();
       _stopReferenceTimer();
       _buffer = buffer;
@@ -383,10 +394,58 @@ class WebHostController extends ChangeNotifier {
       _notify();
     } catch (e, st) {
       preparingSoundProgress = null;
-      errorMessage = 'Could not read the sound in that file '
-          '(is it a format this browser plays?): $e';
+      errorMessage = e is StateError
+          ? e.message
+          : 'Could not read the sound in that file '
+              '(is it a format this browser plays?): $e';
       reportError(e, st, context: 'webHost.loadTrack');
       _notify();
+    }
+  }
+
+  /// The file's sound as an AudioBuffer. The browser decodes most files
+  /// itself; what it can't (Dolby/DTS sound, many MKVs) goes through
+  /// ffmpeg.wasm first, which is downloaded once on demand.
+  Future<web.AudioBuffer> _decodeSound(
+    web.AudioContext ctx,
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    // Decode a copy: decodeAudioData detaches the ArrayBuffer it's given,
+    // and the original bytes are still needed (video picture, sending).
+    Future<web.AudioBuffer> decode(Uint8List data) =>
+        ctx.decodeAudioData(Uint8List.fromList(data).buffer.toJS).toDart;
+    try {
+      return await decode(bytes);
+    } catch (_) {
+      // Fall through to the converter.
+    }
+    try {
+      preparingSoundProgress = 0;
+      preparingSoundNote = 'Reading this file’s sound…';
+      _notify();
+      final converted = await extractAudioWithFfmpeg(
+        bytes,
+        fileName,
+        onStage: (stage) {
+          preparingSoundNote = stage == FfmpegStage.download
+              ? 'Downloading the audio converter (32 MB, once)…'
+              : 'Converting this file’s sound…';
+          _notify();
+        },
+        onProgress: (p) {
+          preparingSoundProgress = p;
+          _notify();
+        },
+      );
+      return await decode(converted);
+    } catch (e) {
+      throw StateError(
+        'This browser can’t read the sound in that file, and converting it '
+        'failed ($e). Try an MP4 or WebM, or check the internet connection.',
+      );
+    } finally {
+      preparingSoundNote = null;
     }
   }
 
@@ -624,6 +683,8 @@ class WebHostController extends ChangeNotifier {
       final ring = PcmRing(channels: LiveFrames.channels, sampleRate: rate, capacitySeconds: 30);
       _capture = capture;
       _liveRing = ring;
+      liveSilent = false;
+      _silentFrames = 0;
       _livePlayer = LivePcmPlayer(ctx, ring, destination: _gain)..volume = volume;
       capture.onEnded(() {
         if (identical(_capture, capture)) stopTabShare();
@@ -661,6 +722,7 @@ class WebHostController extends ChangeNotifier {
     final player = _livePlayer;
     final ctx = _ctx;
     if (ring == null || player == null || ctx == null || currentTrack != track) return;
+    _trackSilence(b, rate);
     if (player.startWallMs == null) {
       // Frame 0 was captured at this wall time; everyone hears it
       // [liveDelayMs] later.
@@ -677,6 +739,8 @@ class WebHostController extends ChangeNotifier {
         ),
       );
       _startReferenceTimer();
+      // The share card goes from "Starting…" to live.
+      _notify();
     }
     final pcm = LiveFrames.interleave([b.left, b.right]);
     ring.write(b.frame, pcm);
@@ -719,12 +783,30 @@ class WebHostController extends ChangeNotifier {
   }
 
   /// Stops sharing the tab; listeners stop too ([announce]).
+  void _trackSilence(CaptureBatch b, int rate) {
+    var loud = false;
+    for (var i = 0; i < b.left.length; i++) {
+      if (b.left[i].abs() > 1e-4 || b.right[i].abs() > 1e-4) {
+        loud = true;
+        break;
+      }
+    }
+    _silentFrames = loud ? 0 : _silentFrames + b.left.length;
+    final silent = _silentFrames > rate * 3;
+    if (silent != liveSilent) {
+      liveSilent = silent;
+      _notify();
+    }
+  }
+
   void stopTabShare({bool announce = true}) {
     final capture = _capture;
     if (capture == null) return;
     final track = currentTrack;
     final pos = _timelinePositionAt(_nowMs());
     _capture = null;
+    liveSilent = false;
+    _silentFrames = 0;
     unawaited(_captureSub?.cancel());
     _captureSub = null;
     capture.stop();
@@ -768,7 +850,8 @@ class WebHostController extends ChangeNotifier {
       web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mime ?? 'video/mp4')),
     );
     _videoUrl = url;
-    _video = (web.document.createElement('video') as web.HTMLVideoElement)
+    videoFailed = false;
+    final video = _video = (web.document.createElement('video') as web.HTMLVideoElement)
       ..muted = true // the sound comes from the WebAudio timeline
       ..playsInline = true
       ..preload = 'auto'
@@ -778,6 +861,13 @@ class WebHostController extends ChangeNotifier {
       ..style.height = '100%'
       ..style.objectFit = 'contain'
       ..style.backgroundColor = 'black';
+    // A picture this browser can't decode (e.g. HEVC): the sound still
+    // plays everywhere; the UI says why there's no picture.
+    video.onerror = ((web.Event _) {
+      if (!identical(_video, video)) return;
+      videoFailed = true;
+      _notify();
+    }).toJS;
   }
 
   /// Starts the picture at context time [when] from [offsetSec], then keeps
@@ -933,9 +1023,29 @@ class WebHostController extends ChangeNotifier {
         if (_awaitingReadyAcks) _readyAcks.add(id);
       case ControlMessageType.listenerStatusUpdate:
         _handleStatus(listener, message.payload);
+      case ControlMessageType.calibrate:
+        _playCalibrationChirp(id);
       default:
         break;
     }
+  }
+
+  /// A listener is calibrating with its mic: play the host chirp through
+  /// this browser's speakers 1.5 s from now (the same output path as the
+  /// music) and tell the listener exactly when.
+  void _playCalibrationChirp(String id) {
+    final ctx = _ctx ??= web.AudioContext();
+    if (ctx.state != 'running') unawaited(ctx.resume().toDart);
+    final atMs = _nowMs() + 1500;
+    final rate = ctx.sampleRate;
+    final pcm = AcousticCalibration.chirp(rate.round(), up: true);
+    final buffer = ctx.createBuffer(1, pcm.length, rate)..copyToChannel(pcm.toJS, 0);
+    final gain = ctx.createGain()..gain.value = 0.8;
+    final source = ctx.createBufferSource()..buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(ctx.currentTime + (atMs - _nowMs()) / 1000);
+    _send(id, ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs));
   }
 
   void _handleStatus(WebListener listener, Map<String, dynamic> payload) {
@@ -958,6 +1068,7 @@ class WebHostController extends ChangeNotifier {
       roundTripMs: listener.roundTripMs ?? 0,
       receivedAtMs: _nowMs(),
       hostPositionAt: _timelinePositionAt,
+      sentAtHostMs: payload['sentAtHostMs'] as int?,
     );
     final previous = listener.driftMs;
     // Light smoothing: the reported position is interpolated and jittery.

@@ -99,6 +99,13 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   @override
   double get volume => _session.volume;
   @override
+  int get syncNudgeMs => _session.syncNudgeMs;
+  @override
+  void setSyncNudge(int ms) => _session.setSyncNudge(ms);
+  @override
+  Future<int> calibrateWithMic({void Function(int run)? onRun}) =>
+      _session.calibrateWithMic(onRun: onRun);
+  @override
   bool get hostLeft => _hostGone || _session.hostLeft;
   @override
   bool get isReconnecting => _session.isReconnecting;

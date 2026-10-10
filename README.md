@@ -24,8 +24,12 @@ system asks for reduced motion.
   Each listener converts that to its own local time using the estimated
   clock offset, pre-buffers, and fires playback from a precise timer at that
   instant — instead of just reacting to "play now" and drifting. While
-  playing, the host re-broadcasts its *measured* playhead once a second and
-  listeners apply tiny (~30ms) corrections, so drift never grows audible.
+  playing, the host re-broadcasts its *measured* playhead once a second.
+  A listener more than ~30 ms off plays up to 3 % fast or slow (pitch
+  preserved) until it's back; only jumps over ~120 ms are seeked, since
+  seeks land imprecisely on many phones. Listeners stamp their status
+  reports with when they were measured (host clock), so the drift the host
+  shows is what the listener really has, not network delay.
   Clock sync runs continuously (a sample every 2s, plus a burst before every
   scheduled start) so time conversions stay fresh.
 - **Ready-ack starts**: before a play/seek, the host asks every listener to
@@ -148,7 +152,14 @@ minute, WebCodecs in Chrome/Edge/Firefox; a WAV fallback elsewhere), so a
 big video doesn't have to travel to every phone and phones never decode a
 picture nobody sees. Android writes it to disk, so long films don't sit in
 memory. Picks over 1 GB are refused (the browser holds the file). Which formats work
-depends on the host browser: Chrome/Edge play MP4 (H.264/AAC) and WebM.
+depends on the host browser: Chrome/Edge play MP4 (H.264/AAC), WebM and most
+MKVs. When the browser can't decode a video's **sound** (Dolby AC-3/E-AC-3,
+DTS — common in MKV movies), the host loads ffmpeg.wasm on first need
+(~32 MB from jsdelivr, cached afterwards; see `web/ffmpeg/`) and converts the
+first sound track. A picture the browser can't decode (e.g. HEVC) leaves the
+session audio-only, with a note. The **full-screen** button (or a double-click)
+on the picture puts the synced video in browser full screen; the Android host
+opens an immersive landscape view.
 
 The **Android app** can host a video too: it shows the picture and copies the
 video's sound track into an audio-only file (no re-encoding — AAC goes to
@@ -156,8 +167,9 @@ video's sound track into an audio-only file (no re-encoding — AAC goes to
 with another sound codec are sent whole.
 
 **Share a browser tab (YouTube, Spotify Web, …)**: on a computer running
-Chrome or Edge, **Share a browser tab** and pick the tab (with "Share tab
-audio" on). Live audio can't be copied ahead of time, so every device — the
+Chrome or Edge, **Share a browser tab** and pick the **tab** (with "Share tab
+audio" on) — windows and whole screens carry no sound, so the picker opens on
+tabs and hides screens; if nothing comes through the host says why. Live audio can't be copied ahead of time, so every device — the
 host included — plays it **1 s behind the tab**, all at the same instant:
 the host stamps the captured audio with its clock, streams it (16-bit PCM,
 ~190 KB/s per listener — fine on WiFi, heavy for many listeners over the
@@ -212,7 +224,12 @@ Web-hosting notes:
   the host flags them with "Needs the latest Ampme app").
 - Each device's speaker/Bluetooth latency isn't visible to the app; if the
   host computer still sounds ahead of (or behind) the phones, nudge **This
-  speaker** on the host screen.
+  speaker** on the host screen. A single phone that sounds behind (Bluetooth
+  speakers especially) has its own **Sync nudge** on its now-playing card
+  (−300…+500 ms, saved on that device), or **Calibrate with mic**: the host
+  and the phone each play a short chirp in different pitch bands, the phone
+  records both and sets the nudge from the gap (median of 3 runs; needs a
+  web host — the Android host doesn't play the chirp yet).
 - Browsers may block audio until the listener taps the page (autoplay
   policy); the join screen then shows **Tap to start audio**.
 - Keep the hosting tab open and visible — browsers throttle background tabs

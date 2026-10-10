@@ -16,7 +16,12 @@ enum ControlMessageType {
   clockSyncRequest,
   clockSyncResponse,
   listenerStatusUpdate,
-  sessionEnded;
+  sessionEnded,
+
+  /// Mic calibration. Listener -> host: "play the calibration chirp" (no
+  /// payload). Host -> listener: when it will (`chirpAtHostTimeMs`).
+  /// Hosts that predate this drop it as an unknown frame.
+  calibrate;
 
   String toJsonValue() => name;
 
@@ -244,6 +249,16 @@ class ControlMessage {
     );
   }
 
+  /// Calibration (see [ControlMessageType.calibrate]): a request from a
+  /// listener, or the host's answer carrying [chirpAtHostTimeMs].
+  factory ControlMessage.calibrate({required String senderId, int? chirpAtHostTimeMs}) {
+    return ControlMessage(
+      type: ControlMessageType.calibrate,
+      senderId: senderId,
+      payload: {'chirpAtHostTimeMs': ?chirpAtHostTimeMs},
+    );
+  }
+
   // ---- Listener -> host ----
 
   factory ControlMessage.clockSyncRequest({
@@ -264,6 +279,7 @@ class ControlMessage {
     required int positionMs,
     required int syncOffsetMs,
     required int roundTripMs,
+    int? sentAtHostMs,
   }) {
     return ControlMessage(
       type: ControlMessageType.listenerStatusUpdate,
@@ -274,6 +290,8 @@ class ControlMessage {
         'positionMs': positionMs,
         'syncOffsetMs': syncOffsetMs,
         'roundTripMs': roundTripMs,
+        // When [positionMs] was measured, on the host's clock (newer apps).
+        'sentAtHostMs': ?sentAtHostMs,
       },
     );
   }
