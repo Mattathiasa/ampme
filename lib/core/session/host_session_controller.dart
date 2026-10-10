@@ -520,12 +520,29 @@ class HostSessionController extends ChangeNotifier {
           // A listener is calibrating with its mic: play the host chirp
           // through this speaker and tell it exactly when.
           final engine = _chirpEngine ??= _chirpEngineFactory();
+          final chirp = ChirpPlayer(engine).startHostChirp();
+          final listenerId = incoming.deviceId;
           _controlServer.sendTo(
-            incoming.deviceId,
+            listenerId,
             ControlMessage.calibrate(
               senderId: hostDevice.deviceId,
-              chirpAtHostTimeMs: ChirpPlayer(engine).startHostChirp(),
+              chirpAtHostTimeMs: chirp.plannedMs,
             ),
+          );
+          // A player can't start on an exact instant: once the chirp has
+          // played, say when it really sounded.
+          unawaited(
+            chirp.actualMs.then((actual) {
+              if (actual == null) return;
+              _controlServer.sendTo(
+                listenerId,
+                ControlMessage.calibrate(
+                  senderId: hostDevice.deviceId,
+                  chirpAtHostTimeMs: actual,
+                  measured: true,
+                ),
+              );
+            }),
           );
         default:
           break;

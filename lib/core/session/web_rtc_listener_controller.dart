@@ -105,6 +105,9 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   @override
   Future<int> calibrateWithMic({void Function(int run)? onRun}) =>
       _session.calibrateWithMic(onRun: onRun);
+
+  @override
+  List<int> get lastCalibrationRuns => _session.lastCalibrationRuns;
   @override
   bool get hostLeft => _hostGone || _session.hostLeft;
   @override

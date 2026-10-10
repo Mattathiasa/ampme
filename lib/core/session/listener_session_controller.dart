@@ -50,7 +50,11 @@ class ListenerSessionController extends ChangeNotifier
         _micFactory = micFactory ?? RecordCalibrationMic.new;
 
   final CalibrationMic Function() _micFactory;
+  @override
+  List<int> lastCalibrationRuns = const [];
+
   Completer<int?>? _calibrationReply;
+  Completer<int?>? _calibrationMeasured;
 
   /// The host's latest timeline reference (position at host time), so
   /// playback can resume in sync after a calibration borrowed the player.
@@ -312,8 +316,11 @@ class ListenerSessionController extends ChangeNotifier
       case ControlMessageType.sessionEnded:
         _handleHostGone();
       case ControlMessageType.calibrate:
-        // A time, or no time: a host that can't play the chirp (phone hosts).
-        final reply = _calibrationReply;
+        // The planned chirp time (none: a host too old to play it), or a
+        // phone host's follow-up with when it really sounded.
+        final reply = message.payload['measured'] == true
+            ? _calibrationMeasured
+            : _calibrationReply;
         if (reply != null && !reply.isCompleted) {
           reply.complete(message.payload['chirpAtHostTimeMs'] as int?);
         }
@@ -557,6 +564,7 @@ class ListenerSessionController extends ChangeNotifier
         results.add(await _calibrateOnce(client));
       }
       final nudge = AcousticCalibration.median(results);
+      lastCalibrationRuns = List.unmodifiable(results);
       if (nudge.abs() > 600) {
         throw const CalibrationException(
           'The measurement didn’t make sense — try again somewhere quieter.',
@@ -603,6 +611,7 @@ class ListenerSessionController extends ChangeNotifier
       await mic.start();
       recording = true;
       final reply = _calibrationReply = Completer<int?>();
+      final measured = _calibrationMeasured = Completer<int?>();
       client.send(ControlMessage.calibrate(senderId: selfDevice.deviceId));
       final atHost = await reply.future.timeout(
         const Duration(seconds: 3),
@@ -619,13 +628,25 @@ class ListenerSessionController extends ChangeNotifier
       final offset = client.clockEstimate?.offsetMs ?? 0;
       // The host's chirp (A) is due at [hostAt] on our clock; ours (B) 700 ms
       // later, through our own player.
-      final hostAt = DateTime.fromMillisecondsSinceEpoch(atHost - offset);
+      var hostAt = DateTime.fromMillisecondsSinceEpoch(atHost - offset);
+      // Our player starts [ChirpPlayer.leadMs] before chirp B.
       await chirp.playAt(hostAt.add(const Duration(milliseconds: 700)), host: false);
-      await _until(hostAt.add(const Duration(milliseconds: 900)));
-      final reportedB = chirp.reportedChirpTime(DateTime.now());
       await _until(hostAt.add(const Duration(milliseconds: 1400)));
       recording = false;
       final rec = await mic.stop();
+      // Read our chirp's timing now, with the player well into steady state
+      // (right after a start, Android positions are rough).
+      final reportedB = await chirp.measuredChirpTime();
+      // A phone host says when its chirp really sounded; a web host's plays
+      // exactly on time and sends nothing more.
+      final wait = hostAt.add(const Duration(milliseconds: 2600)).difference(DateTime.now());
+      final actualHost = await measured.future.timeout(
+        wait > Duration.zero ? wait : Duration.zero,
+        onTimeout: () => null,
+      );
+      if (actualHost != null) {
+        hostAt = DateTime.fromMillisecondsSinceEpoch(actualHost - offset);
+      }
       if (reportedB == null) {
         throw const CalibrationException('This device couldn’t play its test sound.');
       }
@@ -647,6 +668,7 @@ class ListenerSessionController extends ChangeNotifier
       );
     } finally {
       _calibrationReply = null;
+      _calibrationMeasured = null;
       if (recording) unawaited(mic.stop().catchError((Object _) => Float32List(0)));
     }
   }

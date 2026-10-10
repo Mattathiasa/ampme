@@ -251,11 +251,17 @@ class ControlMessage {
 
   /// Calibration (see [ControlMessageType.calibrate]): a request from a
   /// listener, or the host's answer carrying [chirpAtHostTimeMs].
-  factory ControlMessage.calibrate({required String senderId, int? chirpAtHostTimeMs}) {
+  /// [measured]: a follow-up from a host whose player can't start on an
+  /// exact instant (phone hosts) — when its chirp actually sounded.
+  factory ControlMessage.calibrate({
+    required String senderId,
+    int? chirpAtHostTimeMs,
+    bool measured = false,
+  }) {
     return ControlMessage(
       type: ControlMessageType.calibrate,
       senderId: senderId,
-      payload: {'chirpAtHostTimeMs': ?chirpAtHostTimeMs},
+      payload: {'chirpAtHostTimeMs': ?chirpAtHostTimeMs, if (measured) 'measured': true},
     );
   }
 

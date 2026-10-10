@@ -252,10 +252,7 @@ class JoinViewModel extends ChangeNotifier {
       unawaited(SyncNudgeStore.save(nudge));
       unawaited(SyncNudgeStore.saveCalibrated());
       suggestCalibration = false;
-      calibrationMessage = nudge == 0
-          ? 'Measured: this device is already in step.'
-          : 'Measured: this device sounded ${nudge.abs()} ms '
-              '${nudge > 0 ? 'late' : 'early'} — corrected.';
+      calibrationMessage = calibrationSummary(nudge, s.lastCalibrationRuns);
     } on CalibrationException catch (e) {
       calibrationMessage = e.message;
     } catch (e, st) {
@@ -296,4 +293,19 @@ class JoinViewModel extends ChangeNotifier {
     session?.dispose();
     super.dispose();
   }
+}
+
+/// The calibration outcome for the UI, with each reading so a bad
+/// measurement is visible rather than a silent "in step".
+String calibrationSummary(int nudge, List<int> runs) {
+  final readings = runs.isEmpty ? '' : ' (readings: ${runs.join(', ')} ms)';
+  final spread = runs.isEmpty
+      ? 0
+      : runs.reduce((a, b) => a > b ? a : b) - runs.reduce((a, b) => a < b ? a : b);
+  final verdict = nudge.abs() < 5
+      ? 'Measured: this device is in step with the host'
+      : 'Measured: this device sounded ${nudge.abs()} ms '
+            '${nudge > 0 ? 'late' : 'early'} — corrected';
+  final warn = spread > 30 ? ' The readings disagreed — try again nearer the host.' : '';
+  return '$verdict$readings.$warn';
 }

@@ -15,6 +15,7 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/sync/acoustic_calibration.dart';
+import '../../core/sync/chirp_player.dart';
 import '../../utils/id_generator.dart';
 import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
@@ -1036,7 +1037,7 @@ class WebHostController extends ChangeNotifier {
   void _playCalibrationChirp(String id) {
     final ctx = _ctx ??= web.AudioContext();
     if (ctx.state != 'running') unawaited(ctx.resume().toDart);
-    final atMs = _nowMs() + 1500;
+    final atMs = _nowMs() + ChirpPlayer.hostChirpDelay.inMilliseconds;
     final rate = ctx.sampleRate;
     final pcm = AcousticCalibration.chirp(rate.round(), up: true);
     final buffer = ctx.createBuffer(1, pcm.length, rate)..copyToChannel(pcm.toJS, 0);
@@ -1046,6 +1047,12 @@ class WebHostController extends ChangeNotifier {
     gain.connect(ctx.destination);
     source.start(ctx.currentTime + (atMs - _nowMs()) / 1000);
     _send(id, ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs));
+    // WebAudio plays exactly on time: confirm right away so the listener
+    // needn't wait for a measured follow-up.
+    _send(
+      id,
+      ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs, measured: true),
+    );
   }
 
   void _handleStatus(WebListener listener, Map<String, dynamic> payload) {
