@@ -33,6 +33,17 @@ wait_for() {
   ui > "$OUT/ui-timeout.xml"
   adb exec-out screencap -p > "$OUT/timeout.png" || true
   adb logcat -d > "$OUT/logcat.txt" || true
+  # Also print what we saw: artifacts aren't always reachable.
+  {
+    echo "--- uiautomator dump says:"
+    adb shell uiautomator dump /sdcard/ui.xml 2>&1 || true
+    echo "--- focused window:"
+    adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" || true
+    echo "--- screen text/descriptions:"
+    grep -oE 'content-desc="[^"]+"|text="[^"]+"|class="[^"]+EditText"' "$OUT/ui-timeout.xml" | head -n 40 || true
+    echo "--- flutter / app logcat (tail):"
+    grep -iE "flutter|AndroidRuntime|$PKG" "$OUT/logcat.txt" | tail -n 40 || true
+  } >&2
   return 1
 }
 
