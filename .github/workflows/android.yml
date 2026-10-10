@@ -201,10 +201,11 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — tighter sync, and speaker-delay calibration with any host.
+          **Ampme v$VERSION** — Calibrate with mic, fixed.
 
-          - **Tighter lock:** each device now holds within about ±5–12 ms of the host's timeline (was ±30 ms), by trimming its speed by a fraction of a percent — inaudible, no skips.
-          - **Calibrate with mic works with phone hosts too** (before: only the web host). Speaker delay — Bluetooth especially — is the one part of sync no app can see without listening, so each device now suggests calibrating once; it's remembered.
+          - **Calibrate with mic now measures correctly on Android phones.** It could say "already in step (0 ms)" while an echo remained: it judged the phone's test sound in the first half-second of playback, when Android's timing is still rough. It now waits for steady timing. The result shows each of the three readings.
+          - **Calibration with a phone host is accurate too:** the host reports when its test sound really played, not when it meant to.
+          - Already calibrated? Calibrate once more after updating — the old measurement may be off.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 
