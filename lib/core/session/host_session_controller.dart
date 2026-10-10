@@ -20,6 +20,7 @@ import '../network/models/playback_state.dart';
 import '../network/models/session_beacon.dart';
 import '../network/models/track_info.dart';
 import '../network/network_utils.dart';
+import '../sync/chirp_player.dart';
 import '../sync/report_time.dart';
 import '../../utils/id_generator.dart';
 
@@ -54,8 +55,12 @@ const Duration _readyAckTimeout = Duration(milliseconds: 1500);  /// Deviation (
 /// UDP beacon broadcaster (discoverability). `ChangeNotifier` so a
 /// `HostViewModel` can listen directly with `provider`.
 class HostSessionController extends ChangeNotifier {
-  HostSessionController({required this.hostDevice, AudioEngine? audioEngine})
-    : audioEngine = audioEngine ?? JustAudioEngine() {
+  HostSessionController({
+    required this.hostDevice,
+    AudioEngine? audioEngine,
+    AudioEngine Function()? chirpEngine,
+  }) : audioEngine = audioEngine ?? JustAudioEngine(),
+       _chirpEngineFactory = chirpEngine ?? (() => JustAudioEngine(quiet: true)) {
     // Capture can also end outside Dart's control (user stops the system
     // notification / consent is revoked): reset the broadcast state then.
     _systemAudioCapture.onStopped = _handleSystemAudioStopped;
@@ -63,6 +68,12 @@ class HostSessionController extends ChangeNotifier {
 
   final DeviceInfo hostDevice;
   final AudioEngine audioEngine;
+
+  /// A second, quiet player for listeners' mic calibrations (created on the
+  /// first request): the chirp leaves through this device's speaker like the
+  /// music, without touching the music player.
+  final AudioEngine Function() _chirpEngineFactory;
+  AudioEngine? _chirpEngine;
 
   final _httpServer = AudioHttpServer();
   final _controlServer = ControlServer();
@@ -506,11 +517,15 @@ class HostSessionController extends ChangeNotifier {
           // acks from a previous command can't satisfy the current wait.
           if (_awaitingReadyAcks) _readyAcks.add(incoming.deviceId);
         case ControlMessageType.calibrate:
-          // A phone host doesn't mix a chirp into the music yet; answer
-          // with no time so the listener says so.
+          // A listener is calibrating with its mic: play the host chirp
+          // through this speaker and tell it exactly when.
+          final engine = _chirpEngine ??= _chirpEngineFactory();
           _controlServer.sendTo(
             incoming.deviceId,
-            ControlMessage.calibrate(senderId: hostDevice.deviceId),
+            ControlMessage.calibrate(
+              senderId: hostDevice.deviceId,
+              chirpAtHostTimeMs: ChirpPlayer(engine).startHostChirp(),
+            ),
           );
         default:
           break;
@@ -675,6 +690,7 @@ class HostSessionController extends ChangeNotifier {
   }
 
   Future<void> _disposeAsync() async {
+    await _chirpEngine?.dispose();
     // Release the audio engine promptly so a follow-up screen (e.g. joining a
     // session right after leaving host) doesn't run two players at once.
     _stopPositionSyncTimer();

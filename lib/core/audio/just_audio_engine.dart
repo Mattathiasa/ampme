@@ -16,7 +16,9 @@ import 'audio_session_manager.dart';
 /// at the target wall-clock moment is starting an already-buffered
 /// player — this is what keeps devices tightly aligned.
 class JustAudioEngine implements AudioEngine {
-  final _player = ja.AudioPlayer(
+  late final ja.AudioPlayer _player = ja.AudioPlayer(
+    handleInterruptions: !quiet,
+    handleAudioSessionActivation: !quiet,
     // ExoPlayer's stock defaults require ~2.5s of audio buffered before it
     // starts producing sound. On a joined device that entire buffering
     // window lands after the scheduled start instant — the dominant cause of
@@ -44,7 +46,12 @@ class JustAudioEngine implements AudioEngine {
   bool _playing = false;
   double _speed = 1;
 
-  JustAudioEngine() {
+  /// A side player (e.g. the host's calibration chirp) that must not take
+  /// audio focus or react to interruptions — focus changes would make the
+  /// main player, and so the whole session, pause.
+  final bool quiet;
+
+  JustAudioEngine({this.quiet = false}) {
     // Configure the app-wide audio session (focus + interruptions). just_audio
     // pauses/resumes the player itself on interruption via its built-in
     // handleInterruptions behavior; the manager's events additionally let the

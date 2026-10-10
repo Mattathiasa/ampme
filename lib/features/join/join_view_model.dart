@@ -169,6 +169,7 @@ class JoinViewModel extends ChangeNotifier {
       await controller.connect(signaling);
       session = controller;
       controller.setSyncNudge(await SyncNudgeStore.load());
+      suggestCalibration = !await SyncNudgeStore.loadCalibrated();
     } on SignalingException catch (e) {
       controller?.removeListener(notifyListeners);
       controller?.dispose();
@@ -197,6 +198,7 @@ class JoinViewModel extends ChangeNotifier {
       await controller.connect(hostIp: hostIp, controlPort: controlPort);
       session = controller;
       controller.setSyncNudge(await SyncNudgeStore.load());
+      suggestCalibration = !await SyncNudgeStore.loadCalibrated();
     } catch (e, st) {
       errorMessage = 'Failed to join session: $e';
       reportError(e, st, context: 'joinSession');
@@ -213,6 +215,16 @@ class JoinViewModel extends ChangeNotifier {
 
   /// The outcome of the last calibration, for the UI.
   String? calibrationMessage;
+
+  /// True until this device has calibrated once (or the hint is dismissed):
+  /// the join screen suggests it, since speaker delay is the one part of
+  /// sync only the mic can measure.
+  bool suggestCalibration = false;
+
+  void dismissCalibrationHint() {
+    suggestCalibration = false;
+    notifyListeners();
+  }
 
   /// Measures this device's speaker delay with the mic and sets the nudge.
   Future<void> calibrateWithMic({BuildContext? context}) async {
@@ -238,6 +250,8 @@ class JoinViewModel extends ChangeNotifier {
         notifyListeners();
       });
       unawaited(SyncNudgeStore.save(nudge));
+      unawaited(SyncNudgeStore.saveCalibrated());
+      suggestCalibration = false;
       calibrationMessage = nudge == 0
           ? 'Measured: this device is already in step.'
           : 'Measured: this device sounded ${nudge.abs()} ms '

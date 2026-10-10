@@ -23,6 +23,29 @@ class SyncNudgeStore {
     }
   }
 
+  static const _calibratedKey = 'ampme.calibrated';
+
+  /// Whether this device ever completed a mic calibration (then the app
+  /// stops suggesting it).
+  static Future<bool> loadCalibrated() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_calibratedKey) ?? false;
+    } catch (e, st) {
+      reportError(e, st, context: 'SyncNudgeStore.loadCalibrated');
+      return false;
+    }
+  }
+
+  static Future<void> saveCalibrated() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_calibratedKey, true);
+    } catch (e, st) {
+      reportError(e, st, context: 'SyncNudgeStore.saveCalibrated');
+    }
+  }
+
   static Future<void> save(int ms) async {
     try {
       final prefs = await SharedPreferences.getInstance();

@@ -394,6 +394,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
             calibrationRun: viewModel.calibrationRun,
             calibrationMessage: viewModel.calibrationMessage,
             onCalibrate: () => viewModel.calibrateWithMic(context: context),
+            suggestCalibration: viewModel.suggestCalibration &&
+                session.playbackState == PlaybackState.playing,
+            onDismissSuggestion: viewModel.dismissCalibrationHint,
           ),
         ],
         const SizedBox(height: 24),
@@ -519,8 +522,12 @@ class _SyncNudgeCard extends StatelessWidget {
     required this.onCalibrate,
     this.calibrationRun,
     this.calibrationMessage,
+    this.suggestCalibration = false,
+    this.onDismissSuggestion,
   });
 
+  final bool suggestCalibration;
+  final VoidCallback? onDismissSuggestion;
   final int nudgeMs;
   final ValueChanged<int> onChanged;
   final VoidCallback onCalibrate;
@@ -592,6 +599,34 @@ class _SyncNudgeCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
+          if (suggestCalibration && calibrationRun == null) ...[
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 6, 4, 6),
+              decoration: BoxDecoration(
+                color: tokens.volt.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AmpTokens.radiusField),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.graphic_eq_rounded, color: tokens.volt, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'For exact sync on this speaker, calibrate once (about 10 s). '
+                      'It measures this speaker\'s delay with the mic.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: 'Not now',
+                    onPressed: onDismissSuggestion,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           AmpButton(
             label: calibrationRun == null
                 ? 'Calibrate with mic'

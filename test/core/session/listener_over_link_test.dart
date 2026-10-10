@@ -256,6 +256,22 @@ void main() {
     await reference();
     expect(engine.speeds.last, 1.0);
 
+    // Tight lock with hysteresis: 8 ms alone isn't worth trimming, 15 ms is;
+    // once trimming it continues through 8 ms and stops under 5 ms.
+    final before = engine.speeds.length;
+    offBy = 8;
+    await reference();
+    expect(engine.speeds, hasLength(before), reason: 'within the dead zone');
+    offBy = 15;
+    await reference();
+    expect(engine.speeds.last, lessThan(1.0));
+    offBy = 8;
+    await reference();
+    expect(engine.speeds.last, lessThan(1.0), reason: 'keeps trimming');
+    offBy = 3;
+    await reference();
+    expect(engine.speeds.last, 1.0);
+
     // Big jump: seek, at normal speed.
     offBy = -400;
     await reference();
