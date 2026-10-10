@@ -2080,6 +2080,10 @@ path_provider_android
 path_provider_foundation
 path_provider_linux
 path_provider_platform_interface
+shared_preferences
+shared_preferences_android
+shared_preferences_foundation
+shared_preferences_platform_interface
 video_player
 video_player_android
 video_player_avfoundation
@@ -6178,6 +6182,9 @@ SOFTWARE.
 flutter_lints
 path_provider_windows
 plugin_platform_interface
+shared_preferences_linux
+shared_preferences_web
+shared_preferences_windows
 video_player_web
 xdg_directories
 
