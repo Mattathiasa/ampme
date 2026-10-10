@@ -25,8 +25,8 @@ system asks for reduced motion.
   clock offset, pre-buffers, and fires playback from a precise timer at that
   instant — instead of just reacting to "play now" and drifting. While
   playing, the host re-broadcasts its *measured* playhead once a second.
-  A listener more than ~30 ms off plays up to 3 % fast or slow (pitch
-  preserved) until it's back; only jumps over ~120 ms are seeked, since
+  A listener more than ~12 ms off plays up to 3 % fast or slow (pitch
+  preserved) until it's within 5 ms; only jumps over ~120 ms are seeked, since
   seeks land imprecisely on many phones. Listeners stamp their status
   reports with when they were measured (host clock), so the drift the host
   shows is what the listener really has, not network delay.
@@ -228,8 +228,10 @@ Web-hosting notes:
   speakers especially) has its own **Sync nudge** on its now-playing card
   (−300…+500 ms, saved on that device), or **Calibrate with mic**: the host
   and the phone each play a short chirp in different pitch bands, the phone
-  records both and sets the nudge from the gap (median of 3 runs; needs a
-  web host — the Android host doesn't play the chirp yet).
+  records both and sets the nudge from the gap (median of 3 runs; works
+  with web and phone hosts). Until a device has calibrated once, its
+  now-playing card suggests it: speaker delay is the one part of sync the
+  app can't see without listening.
 - Browsers may block audio until the listener taps the page (autoplay
   policy); the join screen then shows **Tap to start audio**.
 - Keep the hosting tab open and visible — browsers throttle background tabs
