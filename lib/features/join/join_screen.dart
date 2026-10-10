@@ -388,7 +388,13 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
         ),
         if (track != null && !track.isLive) ...[
           const SizedBox(height: 16),
-          _SyncNudgeCard(nudgeMs: session.syncNudgeMs, onChanged: viewModel.setSyncNudge),
+          _SyncNudgeCard(
+            nudgeMs: session.syncNudgeMs,
+            onChanged: viewModel.setSyncNudge,
+            calibrationRun: viewModel.calibrationRun,
+            calibrationMessage: viewModel.calibrationMessage,
+            onCalibrate: () => viewModel.calibrateWithMic(context: context),
+          ),
         ],
         const SizedBox(height: 24),
         AmpButton(
@@ -507,10 +513,19 @@ class _LiveListenerView extends StatelessWidget {
 /// to cancel its own speaker delay (Bluetooth speakers, slow audio paths) —
 /// the drift loop then holds it there.
 class _SyncNudgeCard extends StatelessWidget {
-  const _SyncNudgeCard({required this.nudgeMs, required this.onChanged});
+  const _SyncNudgeCard({
+    required this.nudgeMs,
+    required this.onChanged,
+    required this.onCalibrate,
+    this.calibrationRun,
+    this.calibrationMessage,
+  });
 
   final int nudgeMs;
   final ValueChanged<int> onChanged;
+  final VoidCallback onCalibrate;
+  final int? calibrationRun;
+  final String? calibrationMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -575,6 +590,25 @@ class _SyncNudgeCard extends StatelessWidget {
                 onPressed: nudgeMs < maxSyncNudgeMs ? () => step(10) : null,
               ),
             ],
+          ),
+          const SizedBox(height: 4),
+          AmpButton(
+            label: calibrationRun == null
+                ? 'Calibrate with mic'
+                : 'Listening… ${calibrationRun! + 1} of 3',
+            icon: Icons.mic_rounded,
+            kind: AmpButtonKind.ghost,
+            onPressed: calibrationRun == null ? onCalibrate : null,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            calibrationMessage ??
+                'Hold this device near the others; you’ll hear a few blips. '
+                    'Its music pauses for a moment while it measures.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: calibrationMessage == null ? tokens.textDim : tokens.volt,
+            ),
           ),
         ],
       ),

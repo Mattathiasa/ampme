@@ -14,6 +14,7 @@ import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
+import '../../core/sync/acoustic_calibration.dart';
 import '../../utils/id_generator.dart';
 import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
@@ -933,9 +934,29 @@ class WebHostController extends ChangeNotifier {
         if (_awaitingReadyAcks) _readyAcks.add(id);
       case ControlMessageType.listenerStatusUpdate:
         _handleStatus(listener, message.payload);
+      case ControlMessageType.calibrate:
+        _playCalibrationChirp(id);
       default:
         break;
     }
+  }
+
+  /// A listener is calibrating with its mic: play the host chirp through
+  /// this browser's speakers 1.5 s from now (the same output path as the
+  /// music) and tell the listener exactly when.
+  void _playCalibrationChirp(String id) {
+    final ctx = _ctx ??= web.AudioContext();
+    if (ctx.state != 'running') unawaited(ctx.resume().toDart);
+    final atMs = _nowMs() + 1500;
+    final rate = ctx.sampleRate;
+    final pcm = AcousticCalibration.chirp(rate.round(), up: true);
+    final buffer = ctx.createBuffer(1, pcm.length, rate)..copyToChannel(pcm.toJS, 0);
+    final gain = ctx.createGain()..gain.value = 0.8;
+    final source = ctx.createBufferSource()..buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(ctx.currentTime + (atMs - _nowMs()) / 1000);
+    _send(id, ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs));
   }
 
   void _handleStatus(WebListener listener, Map<String, dynamic> payload) {

@@ -496,6 +496,13 @@ class HostSessionController extends ChangeNotifier {
           // Counted only while a prepare handshake is in flight, so stale
           // acks from a previous command can't satisfy the current wait.
           if (_awaitingReadyAcks) _readyAcks.add(incoming.deviceId);
+        case ControlMessageType.calibrate:
+          // A phone host can't mix a chirp into the music (one player per
+          // app); answer with no time so the listener says so.
+          _controlServer.sendTo(
+            incoming.deviceId,
+            ControlMessage.calibrate(senderId: hostDevice.deviceId),
+          );
         default:
           break;
       }
