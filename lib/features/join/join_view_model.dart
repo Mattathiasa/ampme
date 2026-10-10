@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../core/network/discovery/session_scanner.dart';
@@ -10,6 +12,7 @@ import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
 import '../../core/session/listener_session_controller.dart';
+import '../../core/session/sync_nudge_store.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../utils/join_code.dart';
@@ -163,6 +166,7 @@ class JoinViewModel extends ChangeNotifier {
       controller.addListener(notifyListeners);
       await controller.connect(signaling);
       session = controller;
+      controller.setSyncNudge(await SyncNudgeStore.load());
     } on SignalingException catch (e) {
       controller?.removeListener(notifyListeners);
       controller?.dispose();
@@ -190,6 +194,7 @@ class JoinViewModel extends ChangeNotifier {
       controller.addListener(notifyListeners);
       await controller.connect(hostIp: hostIp, controlPort: controlPort);
       session = controller;
+      controller.setSyncNudge(await SyncNudgeStore.load());
     } catch (e, st) {
       errorMessage = 'Failed to join session: $e';
       reportError(e, st, context: 'joinSession');
@@ -201,6 +206,14 @@ class JoinViewModel extends ChangeNotifier {
 
   /// Sets this device's local playback volume (per-device, doesn't affect the
   /// host or other listeners).
+  /// Shifts this device earlier/later to match the room by ear; remembered.
+  void setSyncNudge(int ms) {
+    final s = session;
+    if (s == null) return;
+    s.setSyncNudge(ms);
+    unawaited(SyncNudgeStore.save(s.syncNudgeMs));
+  }
+
   Future<void> setVolume(double value) async {
     await session?.setLocalVolume(value);
   }

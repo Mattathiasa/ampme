@@ -8,6 +8,7 @@ import '../observability/reporting.dart';
 import '../network/control_client.dart';
 import '../network/control_link.dart';
 import 'active_session.dart';
+import 'sync_nudge_store.dart';
 import '../network/models/control_message.dart';
 import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
@@ -58,6 +59,17 @@ class ListenerSessionController extends ChangeNotifier
   /// file (decoder restart from a keyframe) or on a slow device takes a
   /// while, and without this every correction lands late by that much.
   int seekLeadMs = 0;
+
+  /// This device's speaker delay compensation (see [ActiveSession.syncNudgeMs]):
+  /// every target position is shifted this far ahead.
+  @override
+  int syncNudgeMs = 0;
+
+  @override
+  void setSyncNudge(int ms) {
+    syncNudgeMs = ms.clamp(minSyncNudgeMs, maxSyncNudgeMs);
+    notifyListeners();
+  }
   DateTime? _lastCorrectionAt;
   static const Duration _correctionSettleTime = Duration(milliseconds: 2000);
 
@@ -345,7 +357,9 @@ class ListenerSessionController extends ChangeNotifier
       // offset is exactly how a late joiner lands a second off.
       _client?.syncNow();
       await _waitForFreshSyncSamples();
-      final joinPosition = _estimateHostPositionNow(hostPositionMs, hostTimeMs);
+      final joinPosition =
+          _estimateHostPositionNow(hostPositionMs, hostTimeMs) +
+              Duration(milliseconds: syncNudgeMs);
       await _loadCurrentTrack(preBufferAt: joinPosition);
       if (playbackStateJson == 'playing' && !track.isLive) {
         final startAt = DateTime.now().add(_scheduleLeadTime);
@@ -479,11 +493,17 @@ class ListenerSessionController extends ChangeNotifier
 
       await audioEngine.scheduleStart(
         at: localTarget,
-        position: Duration(milliseconds: positionMs),
+        position: Duration(milliseconds: _nudged(positionMs)),
       );
     } catch (e, st) {
       reportError(e, st, context: 'schedulePlayback');
     }
+  }
+
+  /// [timelineMs] shifted by this device's nudge (never before the start).
+  int _nudged(int timelineMs) {
+    final v = timelineMs + syncNudgeMs;
+    return v < 0 ? 0 : v;
   }
 
   /// Re-anchors this device's playhead on a precise reference the host sent
@@ -504,7 +524,7 @@ class ListenerSessionController extends ChangeNotifier
     // Where the host's playhead is *right now*, on this device's clock.
     final hostNowOnClientClock = hostTimeMs - offsetMs;
     final elapsed = DateTime.now().millisecondsSinceEpoch - hostNowOnClientClock;
-    final target = hostPositionMs + (elapsed > 0 ? elapsed : 0);
+    final target = _nudged(hostPositionMs + (elapsed > 0 ? elapsed : 0));
 
     // Measure against an interpolated position, not the raw getter — the
     // platform only refreshes positions on a coarse grid, and comparing two
@@ -553,7 +573,11 @@ class ListenerSessionController extends ChangeNotifier
         // Report an interpolated position: the host compares this against its
         // own playhead to detect drift, and a raw polled value would be up to
         // a poll interval old by the time it's compared.
-        positionMs: audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds,
+        // Minus the nudge: the host compares against the shared timeline, and
+        // a deliberate lead isn't drift.
+        positionMs:
+            audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds -
+                syncNudgeMs,
         syncOffsetMs: clockOffsetMs ?? 0,
         roundTripMs: roundTripMs ?? 0,
       ),

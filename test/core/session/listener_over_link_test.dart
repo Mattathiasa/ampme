@@ -193,4 +193,66 @@ void main() {
     expect(session.seekLeadMs, closeTo(136, 10), reason: 'converges, no overshoot');
     session.dispose();
   });
+
+  test('a sync nudge plays this device that much ahead of the timeline', () async {
+    final toListener = StreamController<String>();
+    final sent = <ControlMessage>[];
+    final engine = _FakeEngine();
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'android'),
+      audioEngine: engine,
+      trackResolver: (_) async => Uri.parse('blob:x'),
+    );
+    session.attach(PipeControlLink(
+      deviceId: 'p',
+      incoming: toListener.stream,
+      sendFrame: (f) => sent.add(ControlMessage.decode(f)),
+    ));
+    session.setSyncNudge(200);
+    expect(session.syncNudgeMs, 200);
+    session.setSyncNudge(9000);
+    expect(session.syncNudgeMs, 500, reason: 'clamped');
+    session.setSyncNudge(200);
+
+    const track = TrackInfo(trackId: 't', fileName: 'a.mp3', streamUrl: '', durationMs: 60000);
+    toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Scheduled start: 200 ms further into the song.
+    toListener.add(ControlMessage.play(
+      senderId: 'host',
+      trackId: 't',
+      positionMs: 1000,
+      startAtHostTimeMs: DateTime.now().millisecondsSinceEpoch + 800,
+    ).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(engine.scheduled.single.position, const Duration(milliseconds: 1200));
+
+    // Drift loop: a device exactly on the timeline is 200 ms "late" against
+    // its nudged target, so it seeks ahead to timeline + 200.
+    engine._state.add(PlaybackState.playing);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    engine.estimate = (_) => const Duration(milliseconds: 5000);
+    toListener.add(ControlMessage.positionSync(
+      senderId: 'host',
+      trackId: 't',
+      positionMs: 5000,
+      hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+    ).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(engine.seeks.single.inMilliseconds, closeTo(5200, 15));
+
+    // Once there, it's in sync: no further seek, and the host sees ~0 drift.
+    engine.estimate = (_) => const Duration(milliseconds: 5200);
+    session.debugAgeLastCorrection(const Duration(seconds: 3));
+    toListener.add(ControlMessage.positionSync(
+      senderId: 'host',
+      trackId: 't',
+      positionMs: 5000,
+      hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+    ).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(engine.seeks, hasLength(1));
+    session.dispose();
+  });
 }
