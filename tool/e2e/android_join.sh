@@ -47,6 +47,19 @@ wait_for() {
   return 1
 }
 
+# Like wait_for, but quiet: no diagnostics, just success or failure.
+find_for() {
+  local pattern=$1 timeout=${2:-20}
+  for ((i = 0; i < timeout; i += 2)); do
+    if xy=$(ui | python3 "$HERE/android_ui.py" "$pattern"); then
+      echo "$xy"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 tap() { adb shell input tap $1; }
 
 CODE=$(tr -d '[:space:]' < "$CODE_FILE")
@@ -56,8 +69,16 @@ adb install -r -g "$APK"
 adb logcat -c
 adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
 
-tap "$(wait_for '^Join a Session$' 120)"
-tap "$(wait_for 'class:android.widget.EditText' 60)"
+# A tap can land while the home screen is still animating in and do
+# nothing, so tap "Join a Session" again until the join screen opens.
+FIELD=""
+for attempt in 1 2 3; do
+  tap "$(wait_for '^Join a Session$' 120)"
+  if FIELD=$(find_for 'class:android.widget.EditText' 20); then break; fi
+  echo "Join screen didn't open (attempt $attempt); tapping again"
+done
+[ -n "$FIELD" ] || FIELD=$(wait_for 'class:android.widget.EditText' 10)
+tap "$FIELD"
 adb shell input text "$CODE"
 adb shell input keyevent KEYCODE_BACK # close the keyboard
 tap "$(wait_for '^Join$' 30)"
