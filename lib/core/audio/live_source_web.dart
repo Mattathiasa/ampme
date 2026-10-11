@@ -1,5 +1,5 @@
 import 'audio_engine.dart';
-import 'just_audio_engine.dart';
+import 'html_audio_engine.dart';
 import 'live_source.dart';
 import 'live_web_engine.dart';
 import 'pcm_ring.dart';
@@ -11,7 +11,8 @@ Future<LiveSource> openLiveSource(PcmRing ring, int epoch) async {
 }
 
 AudioEngine createWebSessionEngine() => SwitchingAudioEngine(
-      files: JustAudioEngine(),
+      // Browser files read the <audio> element's own clock (see HtmlAudioEngine).
+      files: HtmlAudioEngine(),
       live: LiveWebEngine(),
       isLive: LiveWebEngine.handles,
     );
