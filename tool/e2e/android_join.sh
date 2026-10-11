@@ -157,3 +157,15 @@ if grep -q "USAGE_VOICE_COMMUNICATION" <<<"$STARTED"; then
   exit 1
 fi
 echo "PASS: the APK joined the web-hosted session and is playing media audio"
+
+# Stay in the session until the web host (logging into the same OUT dir) has
+# judged enough drift readings; leaving early cuts its sample short.
+HOST_LOG="$OUT/web-host.log"
+if [ -f "$HOST_LOG" ]; then
+  for ((i = 0; i < 120; i += 3)); do
+    N=$(grep -cE "listener status (In sync|Catching up)" "$HOST_LOG" || true)
+    [ "${N:-0}" -ge 10 ] && break
+    sleep 3
+  done
+  echo "Host has ${N:-0} drift readings"
+fi

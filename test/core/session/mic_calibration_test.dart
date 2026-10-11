@@ -28,11 +28,21 @@ class _Engine implements AudioEngine {
     startPos = position;
   }
 
+  /// Like Android before AudioTrack timestamps arrive: for [startupWindow]
+  /// after each start the reported position runs [startupBiasMs] behind the
+  /// truth, then it's exact.
+  int startupBiasMs = 0;
+  Duration startupWindow = const Duration(milliseconds: 800);
+
   @override
   Duration estimatePositionAt(DateTime t) {
     final s = startedAt;
     if (s == null || t.isBefore(s)) return Duration.zero;
-    return startPos + t.difference(s);
+    final truth = startPos + t.difference(s);
+    if (t.difference(s) < startupWindow) {
+      return truth - Duration(milliseconds: startupBiasMs);
+    }
+    return truth;
   }
 
   @override
@@ -117,8 +127,8 @@ void main() {
         trackResolver: (_) async => Uri.parse('blob:song'),
         micFactory: () => _RoomMic(
           () => hostChirp,
-          // The chirp player starts 300 ms of lead-in before the chirp.
-          () => deviceChirp = engine.startedAt!.add(const Duration(milliseconds: 300)),
+          // The chirp player starts [ChirpPlayer.leadMs] of silence before the chirp.
+          () => deviceChirp = engine.startedAt!.add(const Duration(milliseconds: ChirpPlayer.leadMs)),
           120,
         ),
       );
@@ -129,7 +139,7 @@ void main() {
           sendFrame: (frame) {
             final m = ControlMessage.decode(frame);
             if (m.type == ControlMessageType.calibrate) {
-              final at = DateTime.now().add(const Duration(milliseconds: 300));
+              final at = DateTime.now().add(const Duration(milliseconds: 2000));
               hostChirp = at;
               scheduleMicrotask(
                 () => toListener.add(
@@ -199,18 +209,104 @@ void main() {
     session.dispose();
   });
 
-  test('a phone host schedules its chirp ahead and reports exactly when', () async {
+  test('a phone host plans its chirp ahead, then reports when it really sounded', () async {
     final engine = _Engine();
     final before = DateTime.now().millisecondsSinceEpoch;
-    final atMs = ChirpPlayer(engine).startHostChirp();
-    expect(atMs - before, inInclusiveRange(1490, 1600));
+    final chirp = ChirpPlayer(engine).startHostChirp();
+    expect(chirp.plannedMs - before, inInclusiveRange(1990, 2100));
+    // The player starts [leadMs] early so the chirp lands on the plan.
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(engine.loaded, hasLength(1));
-    // The WAV starts with [leadMs] of silence, so playback starts that much
-    // earlier and the chirp itself sounds at atMs.
     expect(
       engine.scheduled.single.at.millisecondsSinceEpoch,
-      atMs - ChirpPlayer.leadMs,
+      chirp.plannedMs - ChirpPlayer.leadMs,
     );
-  });
+    // This fake starts exactly when scheduled, so the measured time matches.
+    expect(await chirp.actualMs, closeTo(chirp.plannedMs, 5));
+  }, timeout: const Timeout(Duration(seconds: 10)));
+
+  test('a late-starting phone host chirp is corrected by its follow-up', () async {
+    // The host planned its chirp for T but its player only got going 120 ms
+    // later; it says so. Without the follow-up this device would look 120 ms
+    // early.
+    final toListener = StreamController<String>();
+    final engine = _Engine();
+    DateTime? hostChirp;
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'android'),
+      audioEngine: engine,
+      micFactory: () => _RoomMic(
+        () => hostChirp,
+        () => engine.startedAt!.add(const Duration(milliseconds: ChirpPlayer.leadMs)),
+        40,
+      ),
+    );
+    session.attach(
+      PipeControlLink(
+        deviceId: 'p',
+        incoming: toListener.stream,
+        sendFrame: (frame) {
+          if (ControlMessage.decode(frame).type != ControlMessageType.calibrate) return;
+          final planned = DateTime.now().add(const Duration(milliseconds: 2000));
+          final actual = planned.add(const Duration(milliseconds: 120));
+          hostChirp = actual;
+          scheduleMicrotask(() => toListener.add(ControlMessage.calibrate(
+                senderId: 'host',
+                chirpAtHostTimeMs: planned.millisecondsSinceEpoch,
+              ).encode()));
+          Timer(const Duration(milliseconds: 2400), () => toListener.add(ControlMessage.calibrate(
+                senderId: 'host',
+                chirpAtHostTimeMs: actual.millisecondsSinceEpoch,
+                measured: true,
+              ).encode()));
+        },
+      ),
+    );
+    expect(await session.calibrateWithMic(), closeTo(40, 5));
+    session.dispose();
+  }, timeout: const Timeout(Duration(seconds: 40)));
+
+  test(
+    'a player whose position is rough right after starting still measures true',
+    () async {
+      // The user's case: a phone 60 ms late, whose player under-reports its
+      // position by 60 ms for its first 800 ms. Judged in that window, the
+      // chirp looked on time and calibration said 0 ms.
+      final toListener = StreamController<String>();
+      final engine = _Engine()..startupBiasMs = 60;
+      DateTime? hostChirp;
+      final session = ListenerSessionController(
+        selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'android'),
+        audioEngine: engine,
+        micFactory: () => _RoomMic(
+          () => hostChirp,
+          () => engine.startedAt!.add(const Duration(milliseconds: ChirpPlayer.leadMs)),
+          60,
+        ),
+      );
+      session.attach(
+        PipeControlLink(
+          deviceId: 'p',
+          incoming: toListener.stream,
+          sendFrame: (frame) {
+            if (ControlMessage.decode(frame).type == ControlMessageType.calibrate) {
+              final at = DateTime.now().add(const Duration(milliseconds: 2000));
+              hostChirp = at;
+              scheduleMicrotask(
+                () => toListener.add(
+                  ControlMessage.calibrate(
+                    senderId: 'host',
+                    chirpAtHostTimeMs: at.millisecondsSinceEpoch,
+                  ).encode(),
+                ),
+              );
+            }
+          },
+        ),
+      );
+      final nudge = await session.calibrateWithMic();
+      expect(nudge, closeTo(60, 5));
+      session.dispose();
+    },
+    timeout: const Timeout(Duration(seconds: 40)),
+  );
 }

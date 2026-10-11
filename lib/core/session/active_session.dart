@@ -65,6 +65,9 @@ abstract class ActiveSession extends ChangeNotifier {
   /// reason on failure.
   Future<int> calibrateWithMic({void Function(int run)? onRun});
 
+  /// The individual readings (ms late) of the last successful calibration.
+  List<int> get lastCalibrationRuns;
+
   /// Fraction (0..1) of the current song still being copied to this device
   /// (browser-hosted sessions send the file before playing); null otherwise.
   double? get trackDownloadProgress;

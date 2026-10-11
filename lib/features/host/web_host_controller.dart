@@ -15,6 +15,7 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/sync/acoustic_calibration.dart';
+import '../../core/sync/chirp_player.dart';
 import '../../utils/id_generator.dart';
 import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
@@ -96,6 +97,11 @@ class WebListener {
 }
 
 /// Per-listener WebRTC state.
+/// How long a listener's connection may take to come up after an offer
+/// before the host offers again, and how many times it does.
+const Duration _connectTimeout = Duration(seconds: 12);
+const int _maxOfferRetries = 5;
+
 class _Peer {
   _Peer(this.pc);
 
@@ -107,6 +113,10 @@ class _Peer {
   final List<Map<String, dynamic>> pendingIce = [];
   Timer? disconnectTimer;
   Timer? protocolTimer;
+
+  /// Fires if the connection isn't up soon after the offer (a handshake
+  /// message lost in signaling): the host then offers again.
+  Timer? connectTimer;
   bool spokeProtocol = false;
 
   /// Track whose bytes were fully queued to this listener / are being sent.
@@ -255,6 +265,9 @@ class WebHostController extends ChangeNotifier {
 
   // ---- WebRTC peers (listenerId -> connection) ----
   final Map<String, _Peer> _peers = {};
+
+  /// Re-offers made to each listener whose connection hasn't come up yet.
+  final Map<String, int> _offerAttempts = {};
 
   String? errorMessage;
   bool _disposed = false;
@@ -1036,7 +1049,7 @@ class WebHostController extends ChangeNotifier {
   void _playCalibrationChirp(String id) {
     final ctx = _ctx ??= web.AudioContext();
     if (ctx.state != 'running') unawaited(ctx.resume().toDart);
-    final atMs = _nowMs() + 1500;
+    final atMs = _nowMs() + ChirpPlayer.hostChirpDelay.inMilliseconds;
     final rate = ctx.sampleRate;
     final pcm = AcousticCalibration.chirp(rate.round(), up: true);
     final buffer = ctx.createBuffer(1, pcm.length, rate)..copyToChannel(pcm.toJS, 0);
@@ -1046,6 +1059,12 @@ class WebHostController extends ChangeNotifier {
     gain.connect(ctx.destination);
     source.start(ctx.currentTime + (atMs - _nowMs()) / 1000);
     _send(id, ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs));
+    // WebAudio plays exactly on time: confirm right away so the listener
+    // needn't wait for a measured follow-up.
+    _send(
+      id,
+      ControlMessage.calibrate(senderId: _hostId, chirpAtHostTimeMs: atMs, measured: true),
+    );
   }
 
   void _handleStatus(WebListener listener, Map<String, dynamic> payload) {
@@ -1199,6 +1218,7 @@ class WebHostController extends ChangeNotifier {
         _listeners[id] = WebListener(id, message['deviceName'] as String? ?? 'Unknown device');
         _notify();
         // A re-join (same id) replaces the old connection.
+        _offerAttempts.remove(id);
         _closePeer(id);
         unawaited(_connectPeer(id));
       case 'listener-left':
@@ -1241,6 +1261,9 @@ class WebHostController extends ChangeNotifier {
         if (_peers[id] != peer) return; // superseded by a newer connection
         switch (pc.connectionState) {
           case 'connected':
+            peer.connectTimer?.cancel();
+            peer.connectTimer = null;
+            _offerAttempts.remove(id);
             peer.disconnectTimer?.cancel();
             peer.disconnectTimer = null;
           case 'disconnected':
@@ -1291,6 +1314,20 @@ class WebHostController extends ChangeNotifier {
           )
           .toDart;
       _signaling?.send({'type': 'offer', 'to': id, 'sdp': offer.sdp});
+      // Signaling can lose a message (offer, answer or candidates), leaving
+      // both sides waiting forever: if the link isn't up soon, offer again.
+      // The listener replaces its connection on a fresh offer.
+      peer.connectTimer = Timer(_connectTimeout, () {
+        if (_peers[id] != peer || pc.connectionState == 'connected') return;
+        final attempts = _offerAttempts[id] = (_offerAttempts[id] ?? 0) + 1;
+        if (attempts > _maxOfferRetries || !_listeners.containsKey(id)) {
+          _offerAttempts.remove(id);
+          _dropListener(id);
+          return;
+        }
+        _closePeer(id);
+        unawaited(_connectPeer(id));
+      });
     } catch (e, st) {
       errorMessage = 'Listener connection failed: $e';
       reportError(e, st, context: 'webHost.connectPeer');
@@ -1346,6 +1383,7 @@ class WebHostController extends ChangeNotifier {
   }
 
   void _dropListener(String id) {
+    _offerAttempts.remove(id);
     final removed = _listeners.remove(id) != null;
     _closePeer(id);
     if (removed) _notify();
@@ -1356,6 +1394,7 @@ class WebHostController extends ChangeNotifier {
     if (peer == null) return;
     peer.disconnectTimer?.cancel();
     peer.protocolTimer?.cancel();
+    peer.connectTimer?.cancel();
     try {
       peer.pc.close();
     } catch (_) {
