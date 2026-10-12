@@ -110,6 +110,48 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
                 'link or QR. Every device plays in step.',
           ),
         ),
+        if (viewModel.resumable case final info?) ...[
+          EnterAnimation(
+            child: GlassCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'PICK UP WHERE YOU LEFT OFF',
+                    style: theme.textTheme.labelSmall?.copyWith(color: tokens.textDim),
+                  ),
+                  const SizedBox(height: 6),
+                  Text('${info.name} · ${info.code}', style: theme.textTheme.titleMedium),
+                  if (info.fileName != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      info.fileName!,
+                      style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    'This page was hosting a session. Phones are waiting and '
+                    'reconnect on their own.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
+                  ),
+                  const SizedBox(height: 12),
+                  AmpButton(
+                    label: 'Resume session',
+                    icon: Icons.replay_rounded,
+                    busy: viewModel.isStarting,
+                    onPressed: viewModel.resume,
+                  ),
+                  TextButton(
+                    onPressed: viewModel.discardResume,
+                    child: const Text('Start a new one instead'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
         EnterAnimation(
           index: 1,
           child: TextField(

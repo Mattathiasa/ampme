@@ -239,6 +239,9 @@ class ListenerSessionController extends ChangeNotifier
         // (by then the player may already have errored out on the dead stream).
         _wasPlayingBeforeDrop = playbackState == PlaybackState.playing;
         isReconnecting = true;
+        // No references arrive while the link is down: don't keep trimming
+        // toward a drift measured before it dropped.
+        _setTrim(1);
         notifyListeners();
       case ReconnectionStatus.succeeded:
         isReconnecting = false;
@@ -383,6 +386,8 @@ class ListenerSessionController extends ChangeNotifier
   Future<void> _handleWelcome(ControlMessage message) async {
     sessionName = message.payload['sessionName'] as String;
     hostDeviceId = message.payload['hostDeviceId'] as String;
+    isReconnecting = false;
+    final previousTrackId = currentTrack?.trackId;
     final trackJson = message.payload['currentTrack'];
     currentTrack = trackJson != null
         ? TrackInfo.fromJson(Map<String, dynamic>.from(trackJson as Map))
@@ -392,7 +397,17 @@ class ListenerSessionController extends ChangeNotifier
     final hostTimeMs = message.payload['hostTimeMs'] as int? ?? 0;
 
     final track = currentTrack;
-    if (track != null) {
+    final carryOn = track != null &&
+        !track.isLive &&
+        track.trackId == previousTrackId &&
+        playbackStateJson == 'playing' &&
+        await _audioAdvancing();
+    if (carryOn) {
+      // A resumed host re-connected us mid-song and we kept playing the same
+      // song meanwhile: carry on — the next position reference trims any
+      // drift — instead of a reload that would cut the music.
+      _client?.syncNow();
+    } else if (track != null) {
       // Kick a sync burst and wait for fresh samples before converting host
       // time: phone clocks can be seconds apart, and using a zero/stale
       // offset is exactly how a late joiner lands a second off.
@@ -408,6 +423,14 @@ class ListenerSessionController extends ChangeNotifier
       }
     }
     notifyListeners();
+  }
+
+  /// Whether the song is audibly advancing right now, measured on the
+  /// playhead itself (state events can lag or be missed across a link swap).
+  Future<bool> _audioAdvancing() async {
+    final before = audioEngine.currentPosition;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    return audioEngine.currentPosition - before > const Duration(milliseconds: 150);
   }
 
   /// Converts a host-reported (position, hostTimeMs) pair into this device's
@@ -702,7 +725,12 @@ class ListenerSessionController extends ChangeNotifier
       _setTrim(1);
       return;
     }
-    final offsetMs = _client?.clockEstimate?.offsetMs ?? 0;
+    // No clock sample yet (a fresh link, e.g. a resumed host): the offset
+    // would be a guess, and phone clocks can be seconds apart — correcting
+    // on it is an audible jump. The sync burst lands within a second.
+    final clock = _client?.clockEstimate;
+    if (clock == null) return;
+    final offsetMs = clock.offsetMs;
     // Where the host's playhead is *right now*, on this device's clock.
     final hostNowOnClientClock = hostTimeMs - offsetMs;
     final elapsed = DateTime.now().millisecondsSinceEpoch - hostNowOnClientClock;

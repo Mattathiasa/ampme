@@ -7,6 +7,7 @@ import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/platform/session_keep_alive.dart';
 import '../../utils/join_code.dart';
+import 'session_resume_store.dart';
 import 'sync_math.dart';
 import 'web_host_controller.dart';
 
@@ -41,7 +42,54 @@ class WebHostViewModel extends ChangeNotifier {
       code: code,
       joinCode: code,
       joinLink: buildJoinLink(Uri.base, code),
+      resumable: true,
     );
+  }
+
+  /// A session this page was hosting before a reload (or crash), if recent.
+  ResumeInfo? resumable = SessionResumeStore.load();
+
+  /// Picks the saved session back up: same code (listeners are waiting and
+  /// reconnect by themselves), same song, same point in it.
+  Future<void> resume() async {
+    final info = resumable;
+    if (info == null) return;
+    resumable = null;
+    hostController.unlockAudio();
+    isStarting = true;
+    notifyListeners();
+    final bytes = info.trackId == null ? null : await SessionResumeStore.loadTrackBytes();
+    if (bytes != null) {
+      // Before announcing: listeners' welcome then carries the song.
+      await hostController.loadTrack(bytes, info.fileName ?? 'Song', trackId: info.trackId);
+    }
+    await _start(
+      signaling: CloudSignalingChannel(
+        code: info.code,
+        role: SignalingRole.host,
+        selfId: CloudSignalingChannel.hostId,
+        sessionName: info.name,
+      ),
+      name: info.name,
+      code: info.code,
+      joinCode: info.joinCode,
+      joinLink: info.joinLink,
+      resumable: true,
+    );
+    if (bytes != null && hostController.isRunning) {
+      await hostController.resumePlayback(
+        positionMs: info.positionMs,
+        wallMs: info.wallMs,
+        playing: info.playing,
+      );
+    }
+  }
+
+  /// Forgets the saved session (listeners still waiting give up on their own).
+  void discardResume() {
+    SessionResumeStore.clear();
+    resumable = null;
+    notifyListeners();
   }
 
   /// Starts a session signaled through a LAN relay at [relayAddress]
@@ -88,8 +136,10 @@ class WebHostViewModel extends ChangeNotifier {
     required String code,
     required String joinCode,
     String? joinLink,
+    bool resumable = false,
   }) async {
     isStarting = true;
+    this.resumable = null; // a new session replaces the saved one
     hostController.errorMessage = null;
     notifyListeners();
     try {
@@ -99,6 +149,7 @@ class WebHostViewModel extends ChangeNotifier {
         code: code,
         joinCode: joinCode,
         joinLink: joinLink,
+        resumable: resumable,
       );
       // A sleeping screen throttles this tab, which would let listeners
       // drift: keep it on while hosting.

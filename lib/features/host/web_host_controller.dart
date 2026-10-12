@@ -22,6 +22,7 @@ import '../../core/audio/pcm_ring.dart';
 import '../../core/network/live_frames.dart';
 import 'audio_extract.dart';
 import 'ffmpeg_audio.dart';
+import 'session_resume_store.dart';
 import 'sync_math.dart';
 import 'web_live_capture.dart';
 
@@ -322,6 +323,7 @@ class WebHostController extends ChangeNotifier {
     required String code,
     required String joinCode,
     String? joinLink,
+    bool resumable = false,
   }) async {
     if (isRunning) await end();
     errorMessage = null;
@@ -343,6 +345,17 @@ class WebHostController extends ChangeNotifier {
     sessionCode = code;
     this.joinCode = joinCode;
     this.joinLink = joinLink;
+    _resumable = resumable;
+    if (resumable) {
+      SessionResumeStore.saveSession(
+        code: code,
+        name: name,
+        joinCode: joinCode,
+        joinLink: joinLink,
+      );
+      // Keep the saved timeline fresh: a crashed tab never gets a pagehide.
+      _resumeSaveTimer = Timer.periodic(const Duration(seconds: 2), (_) => _saveTimeline());
+    }
     _installPageHideHook();
     _notify();
   }
@@ -353,7 +366,9 @@ class WebHostController extends ChangeNotifier {
   /// session's track and starts copying it to every listener. Any track
   /// already playing is stopped. For a video, this page shows the picture and
   /// every device (this one included) plays its sound.
-  Future<void> loadTrack(Uint8List bytes, String fileName) async {
+  /// [trackId] keeps a resumed session's song the same track for listeners
+  /// (they still have it, and keep playing).
+  Future<void> loadTrack(Uint8List bytes, String fileName, {String? trackId}) async {
     errorMessage = null;
     if (isSharingTab) stopTabShare();
     try {
@@ -389,7 +404,7 @@ class WebHostController extends ChangeNotifier {
         _fileSendName = fileName;
       }
       final track = TrackInfo(
-        trackId: generateId(),
+        trackId: trackId ?? generateId(),
         fileName: fileName,
         streamUrl: '',
         durationMs: (buffer.duration * 1000).round(),
@@ -398,6 +413,13 @@ class WebHostController extends ChangeNotifier {
       currentTrack = track;
       position = Duration.zero;
       playbackState = PlaybackState.stopped;
+      if (_resumable) {
+        unawaited(SessionResumeStore.saveTrack(
+          trackId: track.trackId,
+          fileName: fileName,
+          bytes: bytes,
+        ));
+      }
       for (final entry in _peers.entries) {
         if (_isOpen(entry.value.control)) {
           _send(entry.key, ControlMessage.trackChanged(senderId: _hostId, track: track));
@@ -459,6 +481,69 @@ class WebHostController extends ChangeNotifier {
       );
     } finally {
       preparingSoundNote = null;
+    }
+  }
+
+  // ---- Resume after a page reload ----
+
+  bool _resumable = false;
+  Timer? _resumeSaveTimer;
+
+  /// Track each re-joining listener says it already holds (skips re-sending).
+  final Map<String, String?> _heldTracks = {};
+
+  void _saveTimeline() {
+    final track = currentTrack;
+    if (!_resumable || track == null || track.isLive) return;
+    final playing = playbackState == PlaybackState.playing;
+    SessionResumeStore.saveTimeline(
+      playing: playing,
+      positionMs: playing ? _timelinePositionAt(_nowMs()) : position.inMilliseconds,
+    );
+  }
+
+  /// Creates/wakes the audio output. Call straight from a tap: browsers
+  /// only allow sound to start inside a user gesture, and a resumed session
+  /// reaches play() only after loading and decoding the saved song.
+  void unlockAudio() {
+    try {
+      final ctx = _ctx ??= web.AudioContext();
+      if (ctx.state != 'running') unawaited(ctx.resume().toDart.catchError((Object _) => null));
+    } catch (_) {
+      // No Web Audio: play() reports it.
+    }
+  }
+
+  /// Continues a resumed session's song where its timeline would be now:
+  /// [positionMs] at wall time [wallMs], still running if [playing].
+  /// Listeners kept playing meanwhile, so landing exactly on that timeline
+  /// (not merely near it) is what lets them carry on without a jump.
+  Future<void> resumePlayback({
+    required int positionMs,
+    required int wallMs,
+    required bool playing,
+  }) async {
+    final track = currentTrack;
+    if (track == null) return;
+    final nowMs = playing ? positionMs + (_nowMs() - wallMs) : positionMs;
+    // Ended while the page was away (a start lead can add up to 3 s).
+    if (nowMs >= track.durationMs - 3500 || !playing) {
+      position = Duration(milliseconds: nowMs.clamp(0, track.durationMs));
+      _notify();
+      return;
+    }
+    try {
+      final ctx = _ctx;
+      if (ctx != null && ctx.state != 'running') await ctx.resume().toDart;
+      await _synchronizedStart(
+        Duration(milliseconds: positionMs),
+        asSeek: false,
+        anchorWallMs: wallMs,
+      );
+    } catch (e, st) {
+      errorMessage = 'Playback failed: $e';
+      reportError(e, st, context: 'webHost.resumePlayback');
+      _notify();
     }
   }
 
@@ -543,11 +628,17 @@ class WebHostController extends ChangeNotifier {
   /// for them to confirm, then picks a start instant far enough ahead for
   /// the command to reach everyone and starts all devices — this browser's
   /// speaker included — at that instant.
-  Future<void> _synchronizedStart(Duration startPosition, {required bool asSeek}) async {
+  /// [anchorWallMs]: [startPosition] is where a running timeline was at that
+  /// wall time, so start wherever it has got to by the start instant.
+  Future<void> _synchronizedStart(
+    Duration startPosition, {
+    required bool asSeek,
+    int? anchorWallMs,
+  }) async {
     while (_inFlightStart != null) {
       await _inFlightStart;
     }
-    final run = _doSynchronizedStart(startPosition, asSeek: asSeek);
+    final run = _doSynchronizedStart(startPosition, asSeek: asSeek, anchorWallMs: anchorWallMs);
     _inFlightStart = run;
     try {
       await run;
@@ -556,7 +647,11 @@ class WebHostController extends ChangeNotifier {
     }
   }
 
-  Future<void> _doSynchronizedStart(Duration startPosition, {required bool asSeek}) async {
+  Future<void> _doSynchronizedStart(
+    Duration startPosition, {
+    required bool asSeek,
+    int? anchorWallMs,
+  }) async {
     final track = currentTrack;
     if (track == null) return;
     // Silence the old playhead right away (a seek shouldn't keep playing
@@ -604,6 +699,9 @@ class WebHostController extends ChangeNotifier {
       _listeners.values.map((l) => l.roundTripMs).whereType<int>(),
     );
     final startAt = _nowMs() + lead;
+    if (anchorWallMs != null) {
+      startPosition += Duration(milliseconds: startAt - anchorWallMs);
+    }
     _startSourceAt(startAt, startPosition);
     final message = asSeek
         ? ControlMessage.seek(
@@ -1133,9 +1231,16 @@ class WebHostController extends ChangeNotifier {
     final bytes = _fileBytes;
     if (peer == null || channel == null || track == null || bytes == null) return;
     if (!_isOpen(channel)) return; // sent once the channel opens
-    if (peer.sentTrackId == track.trackId || peer.sendingTrackId == track.trackId) {
+    if (peer.sentTrackId == track.trackId) {
+      // Already has it (kept from before this host page reloaded).
+      final listener = _listeners[id];
+      if (listener != null && listener.phase == ListenerPhase.connecting) {
+        listener.phase = ListenerPhase.ready;
+        _notify();
+      }
       return;
     }
+    if (peer.sendingTrackId == track.trackId) return;
     peer.sendingTrackId = track.trackId;
     final listener = _listeners[id];
     listener
@@ -1216,6 +1321,8 @@ class WebHostController extends ChangeNotifier {
         final id = message['id'] as String?;
         if (id == null) return;
         _listeners[id] = WebListener(id, message['deviceName'] as String? ?? 'Unknown device');
+        // A listener re-joining a resumed session still holds the song.
+        _heldTracks[id] = message['hasTrackId'] as String?;
         _notify();
         // A re-join (same id) replaces the old connection.
         _offerAttempts.remove(id);
@@ -1244,7 +1351,7 @@ class WebHostController extends ChangeNotifier {
       final config = <String, Object?>{'iceServers': iceServers()}.jsify()
           as web.RTCConfiguration;
       final pc = web.RTCPeerConnection(config);
-      final peer = _Peer(pc);
+      final peer = _Peer(pc)..sentTrackId = _heldTracks.remove(id);
       _peers[id] = peer;
       pc.onicecandidate = ((web.Event event) {
         final candidate = _candidateOf(event);
@@ -1419,6 +1526,12 @@ class WebHostController extends ChangeNotifier {
   void _installPageHideHook() {
     _removePageHideHook();
     final listener = ((web.Event _) {
+      if (_resumable) {
+        // Maybe just a reload: listeners keep playing and wait for this page
+        // to come back with "Resume session"; only End session ends it.
+        _saveTimeline();
+        return;
+      }
       _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
       _signaling?.send({'type': 'end'});
     }).toJS;
@@ -1437,6 +1550,10 @@ class WebHostController extends ChangeNotifier {
   /// Ends the session: tells listeners, tears everything down, and returns
   /// the controller to its idle state so a new session can be started.
   Future<void> end() async {
+    _resumeSaveTimer?.cancel();
+    _resumeSaveTimer = null;
+    if (_resumable) SessionResumeStore.clear();
+    _resumable = false;
     _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
     _signaling?.send({'type': 'end'});
     _removePageHideHook();

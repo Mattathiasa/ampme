@@ -123,6 +123,34 @@ void main() {
     await host.close();
   });
 
+  test('a resumed host page re-joins a listener that says hello again, '
+      'and learns which song it still holds', () async {
+    final hub = _FakeHub();
+    final host = _host(hub);
+    await host.connect();
+    final listener = _listener(hub, 'L1');
+    await listener.connect();
+    await host.close(); // the host page reloads
+
+    final resumed = _host(hub);
+    await resumed.connect();
+    final hostEvents = <Map<String, dynamic>>[];
+    resumed.messages.listen(hostEvents.add);
+    listener.send({
+      'type': 'hello',
+      'to': 'host',
+      'deviceName': 'Phone L1',
+      'hasTrackId': 't1',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final join = hostEvents.singleWhere((m) => m['type'] == 'listener-joined');
+    expect(join['id'], 'L1');
+    expect(join['hasTrackId'], 't1');
+
+    await listener.close();
+    await resumed.close();
+  });
+
   test('listener joining a code with no host fails with a clear error',
       () async {
     final hub = _FakeHub();

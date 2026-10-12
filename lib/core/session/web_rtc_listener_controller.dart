@@ -16,6 +16,7 @@ import '../network/models/device_info.dart';
 import '../network/models/playback_state.dart';
 import '../network/models/track_info.dart';
 import '../network/pipe_control_link.dart';
+import '../network/signaling/cloud_signaling_channel.dart';
 import '../network/signaling/signaling_channel.dart';
 import '../network/webrtc/data_channels.dart';
 import '../network/webrtc/ice_servers.dart';
@@ -26,6 +27,16 @@ import 'listener_session_controller.dart';
 /// How long a peer connection may sit in the transient `disconnected` state
 /// (WiFi blip, NAT rebinding) before the host is treated as gone.
 const Duration _disconnectGrace = Duration(seconds: 10);
+
+/// How long a cloud session's listener keeps playing on its own while the
+/// host is away (its page reloading, its tab restored) before giving up.
+/// The host saves the session and offers to resume it; an explicit End
+/// still ends everyone at once.
+const Duration _hostAwayGrace = Duration(seconds: 90);
+
+/// While the host is away, how often to tell the session we're still here,
+/// so a resumed host page finds us and re-connects us.
+const Duration _reannounceInterval = Duration(seconds: 3);
 
 /// Listener-side controller for a **web-hosted** session (a browser running
 /// the Ampme web app).
@@ -73,6 +84,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   PipeControlLink? _link;
   StreamController<String>? _controlFrames;
   Timer? _disconnectTimer;
+  Timer? _reannounceTimer;
   bool _peerConnected = false;
   bool _disposed = false;
   bool _audioUnlocked = true;
@@ -168,6 +180,12 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     if (sdp.isEmpty || _disposed) return;
     try {
       // A fresh offer (host re-connecting us) replaces any previous peer.
+      // Retire its link quietly first: closing the old control stream would
+      // otherwise read as "host gone" and stop the music the new link is
+      // about to carry on.
+      final oldLink = _link;
+      _link = null;
+      await oldLink?.dispose();
       await _teardownPeer();
       // Android: keep the WebRTC stack on the media audio path so it never
       // switches the phone into call mode under the music player.
@@ -262,17 +280,49 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
         _peerConnected = true;
         _disconnectTimer?.cancel();
         _disconnectTimer = null;
+        _reannounceTimer?.cancel();
+        _reannounceTimer = null;
         _link?.setReconnecting(false);
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
         // Often transient; ICE recovers on its own within a few seconds.
         _link?.setReconnecting(true);
-        _disconnectTimer ??= Timer(_disconnectGrace, _handleHostGone);
+        if (_hostCanResume) {
+          _waitForHost();
+        } else {
+          _disconnectTimer ??= Timer(_disconnectGrace, _handleHostGone);
+        }
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed:
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-        _handleHostGone();
+        if (_hostCanResume) {
+          _link?.setReconnecting(true);
+          _waitForHost();
+        } else {
+          _handleHostGone();
+        }
       default:
         break;
     }
+  }
+
+  /// A cloud-signaled host can come back (page reload) and re-connect us;
+  /// a LAN-relay session ends with its host page.
+  bool get _hostCanResume => _signaling is CloudSignalingChannel;
+
+  /// The host dropped without ending the session: keep the song playing on
+  /// our own clock and keep saying hello until a resumed host page offers a
+  /// fresh connection ([_answerOffer]) — or give up after [_hostAwayGrace].
+  void _waitForHost() {
+    _disconnectTimer ??= Timer(_hostAwayGrace, _handleHostGone);
+    _reannounceTimer ??= Timer.periodic(_reannounceInterval, (_) {
+      final trackId = _session.currentTrack?.trackId;
+      _signaling?.send({
+        'type': 'hello',
+        'to': 'host',
+        'deviceName': selfDevice.deviceName,
+        // We have the song already: the resumed host needn't send it again.
+        'hasTrackId': ?(_uris.containsKey(trackId) ? trackId : null),
+      });
+    });
   }
 
   Future<void> _addIceCandidate(Map<String, dynamic> message) async {
@@ -351,6 +401,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     _hostGone = true;
     _disconnectTimer?.cancel();
     _disconnectTimer = null;
+    _reannounceTimer?.cancel();
+    _reannounceTimer = null;
     // Lets the inner session stop its audio and report the host as gone.
     _link?.close();
     unawaited(_session.audioEngine.pause().catchError((Object _) {}));
@@ -381,6 +433,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   Future<void> _teardown() async {
     _disconnectTimer?.cancel();
     _disconnectTimer = null;
+    _reannounceTimer?.cancel();
+    _reannounceTimer = null;
     await _teardownPeer();
     await _progressSub?.cancel();
     await _messagesSub?.cancel();

@@ -42,8 +42,9 @@ class _FakeEngine implements AudioEngine {
   final speeds = <double>[];
   @override
   Future<void> setSpeed(double speed) async => speeds.add(speed);
+  Duration Function() current = () => Duration.zero;
   @override
-  Duration get currentPosition => Duration.zero;
+  Duration get currentPosition => current();
   @override
   Duration estimatePositionAt(DateTime t) => estimate(t);
   @override
@@ -55,6 +56,31 @@ class _FakeEngine implements AudioEngine {
   @override
   Future<void> dispose() async {}
 }
+
+/// A link to a host on our own clock (offset 0) that answers clock sync —
+/// the drift loop only corrects once it has a clock estimate.
+PipeControlLink _syncedLink(
+  StreamController<String> toListener, {
+  void Function(ControlMessage m)? onSent,
+}) =>
+    PipeControlLink(
+      deviceId: 'p',
+      incoming: toListener.stream,
+      sendFrame: (f) {
+        final m = ControlMessage.decode(f);
+        if (m.type == ControlMessageType.clockSyncRequest) {
+          scheduleMicrotask(() => toListener.add(
+                ControlMessage.clockSyncResponse(
+                  senderId: 'host',
+                  clientSendTimeMs: m.payload['clientSendTimeMs'] as int,
+                  hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+                ).encode(),
+              ));
+          return;
+        }
+        onSent?.call(m);
+      },
+    );
 
 /// A host whose clock runs [hostAheadMs] ahead of ours, answering clock sync
 /// over the pipe the way the web host does.
@@ -163,7 +189,7 @@ void main() {
       audioEngine: engine,
       trackResolver: (_) async => Uri.parse('blob:x'),
     );
-    session.attach(PipeControlLink(deviceId: 'p', incoming: toListener.stream, sendFrame: (_) {}));
+    session.attach(_syncedLink(toListener));
     const track = TrackInfo(trackId: 't', fileName: 'clip.webm', streamUrl: '', durationMs: 60000);
     toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -221,7 +247,7 @@ void main() {
       audioEngine: engine,
       trackResolver: (_) async => Uri.parse('blob:x'),
     );
-    session.attach(PipeControlLink(deviceId: 'p', incoming: toListener.stream, sendFrame: (_) {}));
+    session.attach(_syncedLink(toListener));
     const track = TrackInfo(trackId: 't', fileName: 'a.mp3', streamUrl: '', durationMs: 60000);
     toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -289,11 +315,7 @@ void main() {
       audioEngine: engine,
       trackResolver: (_) async => Uri.parse('blob:x'),
     );
-    session.attach(PipeControlLink(
-      deviceId: 'p',
-      incoming: toListener.stream,
-      sendFrame: (f) => sent.add(ControlMessage.decode(f)),
-    ));
+    session.attach(_syncedLink(toListener, onSent: sent.add));
     session.setSyncNudge(200);
     expect(session.syncNudgeMs, 200);
     session.setSyncNudge(9000);
@@ -341,4 +363,49 @@ void main() {
     expect(engine.seeks, hasLength(1));
     session.dispose();
   });
+
+  for (final advancing in [true, false]) {
+    test(
+        advancing
+            ? 'a resumed host re-connecting mid-song: the song plays on, no reload'
+            : 'a resumed host re-connecting while this device is silent: reload',
+        () async {
+      final engine = _FakeEngine();
+      final session = ListenerSessionController(
+        selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+        audioEngine: engine,
+        trackResolver: (_) async => Uri.parse('blob:x'),
+      );
+      const track = TrackInfo(trackId: 't', fileName: 'a.mp3', streamUrl: '', durationMs: 60000);
+      ControlMessage welcome() => ControlMessage.welcome(
+            senderId: 'host',
+            sessionId: 'AMP-TEST',
+            sessionName: 'Party',
+            hostDeviceId: 'host',
+            currentTrack: track,
+            playbackState: 'playing',
+            positionMs: 5000,
+            hostTimeMs: DateTime.now().millisecondsSinceEpoch,
+          );
+      final first = StreamController<String>();
+      session.attach(_syncedLink(first));
+      first.add(welcome().encode());
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(engine.loaded, hasLength(1));
+      final start = DateTime.now();
+      if (advancing) {
+        engine.current = () => Duration(milliseconds: 5000 + DateTime.now().difference(start).inMilliseconds);
+      }
+
+      // The host page reloaded and offered again: a new link, a new welcome.
+      final second = StreamController<String>();
+      session.attach(_syncedLink(second));
+      second.add(welcome().encode());
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(engine.loaded, hasLength(advancing ? 1 : 2));
+      expect(engine.scheduled, hasLength(advancing ? 1 : 2));
+      expect(session.hostLeft, isFalse);
+      session.dispose();
+    });
+  }
 }

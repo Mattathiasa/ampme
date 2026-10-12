@@ -241,6 +241,7 @@ class CloudSignalingChannel implements SignalingChannel {
               'type': 'listener-joined',
               'id': from,
               'deviceName': message['deviceName'] ?? 'Unknown device',
+              'hasTrackId': message['hasTrackId'],
             });
           }
         case 'bye':
