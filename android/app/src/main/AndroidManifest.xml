@@ -16,6 +16,8 @@
 
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- SessionService: keeps playback and sync running with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <!-- MediaProjection: "broadcast device audio" — capture audio other apps
          are playing (Android 14+ requires this dedicated FGS permission). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
@@ -52,6 +54,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Keeps a session (audio + the sync loop) alive with the screen off. -->
+        <service
+            android:name=".SessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Foreground service that captures system audio (other apps'
              output) via MediaProjection and streams it to the Flutter side.

@@ -201,10 +201,10 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — browser listeners in true sync.
+          **Ampme v$VERSION** — keeps playing with the screen off.
 
-          - **Browser listeners no longer sit up to 0.1 s behind while showing "In sync".** The browser's audio player reported its position from when play was *requested*, not from when sound actually started; listeners now read the real playhead, so the sync loop sees and removes that delay.
-          - Includes v1.7.2: Calibrate with mic fixed on Android phones and with phone hosts, and stalled connections retry automatically.
+          - **Lock your phone, the party keeps going:** while hosting or listening, Ampme now runs as a media-playback service (with a notification) and keeps the CPU and Wi-Fi awake, so audio and sync carry on with the screen off. Listeners can leave from the notification.
+          - Includes v1.7.3: browser listeners read the real playhead (no hidden 0.1 s lag), plus v1.7.2's calibration fix and connection retry.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 

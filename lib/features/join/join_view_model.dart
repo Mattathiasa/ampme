@@ -14,6 +14,7 @@ import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
 import '../../core/session/listener_session_controller.dart';
 import '../../core/session/sync_nudge_store.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
@@ -165,17 +166,18 @@ class JoinViewModel extends ChangeNotifier {
     try {
       await stopScanning();
       controller = WebRtcListenerController(selfDevice: selfDevice);
-      controller.addListener(notifyListeners);
+      controller.addListener(_sessionChanged);
       await controller.connect(signaling);
       session = controller;
       controller.setSyncNudge(await SyncNudgeStore.load());
       suggestCalibration = !await SyncNudgeStore.loadCalibrated();
+      _keepAlive();
     } on SignalingException catch (e) {
-      controller?.removeListener(notifyListeners);
+      controller?.removeListener(_sessionChanged);
       controller?.dispose();
       errorMessage = e.message;
     } catch (e, st) {
-      controller?.removeListener(notifyListeners);
+      controller?.removeListener(_sessionChanged);
       controller?.dispose();
       errorMessage = 'Failed to join web session: $e';
       reportError(e, st, context: 'joinWebSession');
@@ -194,11 +196,12 @@ class JoinViewModel extends ChangeNotifier {
       await stopScanning();
 
       final controller = ListenerSessionController(selfDevice: selfDevice);
-      controller.addListener(notifyListeners);
+      controller.addListener(_sessionChanged);
       await controller.connect(hostIp: hostIp, controlPort: controlPort);
       session = controller;
       controller.setSyncNudge(await SyncNudgeStore.load());
       suggestCalibration = !await SyncNudgeStore.loadCalibrated();
+      _keepAlive();
     } catch (e, st) {
       errorMessage = 'Failed to join session: $e';
       reportError(e, st, context: 'joinSession');
@@ -282,13 +285,34 @@ class JoinViewModel extends ChangeNotifier {
   }
 
   Future<void> leave() async {
+    unawaited(SessionKeepAlive.stop());
     session?.dispose();
     session = null;
     notifyListeners();
   }
 
+  /// Keeps this device playing in sync with the screen off (Android): a
+  /// notification with Leave, plus wake/Wi-Fi locks, while in the session.
+  void _keepAlive() {
+    unawaited(() async {
+      await AppPermissions.requestNotificationAccess();
+      await SessionKeepAlive.start(
+        title: 'Ampme · ${session?.sessionName ?? 'session'}',
+        text: 'Playing in sync — keeps going with the screen off.',
+        onLeave: () => unawaited(leave()),
+      );
+    }());
+  }
+
+  void _sessionChanged() {
+    // The host ended it: nothing left to keep alive.
+    if (session?.hostLeft ?? false) unawaited(SessionKeepAlive.stop());
+    notifyListeners();
+  }
+
   @override
   void dispose() {
+    unawaited(SessionKeepAlive.stop());
     _scanner.dispose();
     session?.dispose();
     super.dispose();
