@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/network/models/playback_state.dart';
 import '../../core/permissions/app_permissions.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/session/sync_nudge_store.dart';
 import '../../utils/platform_info.dart';
 import '../../theme/amp_tokens.dart';
@@ -273,6 +274,14 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
       children: [
         if (session.isReconnecting)
           const AlertStrip(message: 'Connection lost — reconnecting…', busy: true),
+        if (viewModel.routeNotice case final notice?)
+          AlertStrip(message: notice, icon: Icons.speaker_rounded),
+        if (SessionKeepAlive.screenMayDim)
+          const AlertStrip(
+            message: 'Keep this tab open and the screen on — this browser can’t keep it awake, '
+                'and a sleeping tab falls out of sync.',
+            icon: Icons.light_mode_rounded,
+          ),
         if (session.needsAudioUnlock) ...[
           AmpButton(
             label: 'Tap to start audio',
@@ -397,6 +406,7 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
             suggestCalibration: viewModel.suggestCalibration &&
                 session.playbackState == PlaybackState.playing,
             onDismissSuggestion: viewModel.dismissCalibrationHint,
+            outputLabel: viewModel.outputRoute?.label,
           ),
         ],
         const SizedBox(height: 24),
@@ -524,7 +534,11 @@ class _SyncNudgeCard extends StatelessWidget {
     this.calibrationMessage,
     this.suggestCalibration = false,
     this.onDismissSuggestion,
+    this.outputLabel,
   });
+
+  /// The speaker this timing belongs to (each keeps its own).
+  final String? outputLabel;
 
   final bool suggestCalibration;
   final VoidCallback? onDismissSuggestion;
@@ -598,6 +612,14 @@ class _SyncNudgeCard extends StatelessWidget {
               ),
             ],
           ),
+          if (outputLabel != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                'Timing for: $outputLabel',
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
+              ),
+            ),
           const SizedBox(height: 4),
           if (suggestCalibration && calibrationRun == null) ...[
             Container(

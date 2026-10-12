@@ -14,6 +14,8 @@ import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
 import '../../core/session/listener_session_controller.dart';
 import '../../core/session/sync_nudge_store.dart';
+import '../../core/platform/audio_route.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
@@ -165,17 +167,17 @@ class JoinViewModel extends ChangeNotifier {
     try {
       await stopScanning();
       controller = WebRtcListenerController(selfDevice: selfDevice);
-      controller.addListener(notifyListeners);
+      controller.addListener(_sessionChanged);
       await controller.connect(signaling);
       session = controller;
-      controller.setSyncNudge(await SyncNudgeStore.load());
-      suggestCalibration = !await SyncNudgeStore.loadCalibrated();
+      await _applyRouteTiming();
+      _keepAlive();
     } on SignalingException catch (e) {
-      controller?.removeListener(notifyListeners);
+      controller?.removeListener(_sessionChanged);
       controller?.dispose();
       errorMessage = e.message;
     } catch (e, st) {
-      controller?.removeListener(notifyListeners);
+      controller?.removeListener(_sessionChanged);
       controller?.dispose();
       errorMessage = 'Failed to join web session: $e';
       reportError(e, st, context: 'joinWebSession');
@@ -194,11 +196,11 @@ class JoinViewModel extends ChangeNotifier {
       await stopScanning();
 
       final controller = ListenerSessionController(selfDevice: selfDevice);
-      controller.addListener(notifyListeners);
+      controller.addListener(_sessionChanged);
       await controller.connect(hostIp: hostIp, controlPort: controlPort);
       session = controller;
-      controller.setSyncNudge(await SyncNudgeStore.load());
-      suggestCalibration = !await SyncNudgeStore.loadCalibrated();
+      await _applyRouteTiming();
+      _keepAlive();
     } catch (e, st) {
       errorMessage = 'Failed to join session: $e';
       reportError(e, st, context: 'joinSession');
@@ -226,6 +228,50 @@ class JoinViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Where this device's sound comes out; its saved timing is in use.
+  AudioRoute? outputRoute;
+
+  /// Set when the output changed mid-session (e.g. a Bluetooth speaker
+  /// connected), for the UI to say so.
+  String? routeNotice;
+
+  StreamSubscription<AudioRoute>? _routeSub;
+  Timer? _routeNoticeTimer;
+
+  /// Loads the timing saved for the current output route, and follows the
+  /// route for the rest of the session.
+  Future<void> _applyRouteTiming() async {
+    await _useRoute(await AudioRoutes.current());
+    await _routeSub?.cancel();
+    _routeSub = AudioRoutes.changes.listen((route) async {
+      if (route == outputRoute || session == null) return;
+      await _useRoute(route);
+      final r = outputRoute;
+      if (r == null) return;
+      routeNotice = suggestCalibration
+          ? 'Now playing through ${r.label}. It has its own delay — calibrate '
+              'with the mic for it.'
+          : 'Now playing through ${r.label}: using its saved timing.';
+      _routeNoticeTimer?.cancel();
+      _routeNoticeTimer = Timer(const Duration(seconds: 10), dismissRouteNotice);
+      notifyListeners();
+    });
+  }
+
+  Future<void> _useRoute(AudioRoute route) async {
+    final saved = await SyncNudgeStore.load(route);
+    outputRoute = route;
+    session?.setSyncNudge(saved.ms);
+    suggestCalibration = !saved.calibrated;
+    notifyListeners();
+  }
+
+  void dismissRouteNotice() {
+    if (routeNotice == null) return;
+    routeNotice = null;
+    notifyListeners();
+  }
+
   /// Measures this device's speaker delay with the mic and sets the nudge.
   Future<void> calibrateWithMic({BuildContext? context}) async {
     final s = session;
@@ -249,9 +295,13 @@ class JoinViewModel extends ChangeNotifier {
         calibrationRun = run;
         notifyListeners();
       });
-      unawaited(SyncNudgeStore.save(nudge));
-      unawaited(SyncNudgeStore.saveCalibrated());
+      // In a browser the output's name only shows once the mic was allowed:
+      // look again, so this is saved for the named speaker.
+      final route = await AudioRoutes.current();
+      outputRoute = route;
+      unawaited(SyncNudgeStore.save(route, nudge, calibrated: true));
       suggestCalibration = false;
+      routeNotice = null;
       calibrationMessage = calibrationSummary(nudge, s.lastCalibrationRuns);
     } on CalibrationException catch (e) {
       calibrationMessage = e.message;
@@ -269,7 +319,7 @@ class JoinViewModel extends ChangeNotifier {
     final s = session;
     if (s == null) return;
     s.setSyncNudge(ms);
-    unawaited(SyncNudgeStore.save(s.syncNudgeMs));
+    unawaited(SyncNudgeStore.save(outputRoute ?? AudioRoute.fallback, s.syncNudgeMs));
   }
 
   Future<void> setVolume(double value) async {
@@ -282,13 +332,42 @@ class JoinViewModel extends ChangeNotifier {
   }
 
   Future<void> leave() async {
+    unawaited(SessionKeepAlive.stop());
+    unawaited(_routeSub?.cancel());
+    _routeSub = null;
+    _routeNoticeTimer?.cancel();
+    outputRoute = null;
+    routeNotice = null;
     session?.dispose();
     session = null;
     notifyListeners();
   }
 
+  /// Keeps this device playing in sync with the screen off (Android): a
+  /// notification with Leave, plus wake/Wi-Fi locks, while in the session.
+  void _keepAlive() {
+    unawaited(() async {
+      await AppPermissions.requestNotificationAccess();
+      await SessionKeepAlive.start(
+        title: 'Ampme · ${session?.sessionName ?? 'session'}',
+        text: 'Playing in sync — keeps going with the screen off.',
+        onLeave: () => unawaited(leave()),
+      );
+      notifyListeners(); // the page may need its keep-the-screen-on hint
+    }());
+  }
+
+  void _sessionChanged() {
+    // The host ended it: nothing left to keep alive.
+    if (session?.hostLeft ?? false) unawaited(SessionKeepAlive.stop());
+    notifyListeners();
+  }
+
   @override
   void dispose() {
+    unawaited(SessionKeepAlive.stop());
+    unawaited(_routeSub?.cancel());
+    _routeNoticeTimer?.cancel();
     _scanner.dispose();
     session?.dispose();
     super.dispose();

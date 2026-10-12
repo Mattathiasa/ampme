@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import '../../core/network/models/device_info.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/session/host_session_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../core/media/video_audio_extractor.dart';
@@ -65,6 +67,11 @@ class HostViewModel extends ChangeNotifier {
       }
       await hostController.start(sessionName);
       systemAudioSupported = await hostController.isSystemAudioSupported();
+      // Keep the session (music, listeners' sync) going with the screen off.
+      unawaited(SessionKeepAlive.start(
+        title: 'Ampme · hosting $sessionName',
+        text: 'Your session keeps playing with the screen off.',
+      ));
     } catch (e, st) {
       errorMessage = 'Failed to start session: $e';
       reportError(e, st, context: 'startSession');
@@ -186,6 +193,7 @@ class HostViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(SessionKeepAlive.stop());
     hostController.removeListener(notifyListeners);
     hostController.dispose();
     super.dispose();

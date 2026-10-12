@@ -232,6 +232,12 @@ Web-hosting notes:
   with web and phone hosts). Until a device has calibrated once, its
   now-playing card suggests it: speaker delay is the one part of sync the
   app can't see without listening.
+- On Android, hosting or listening runs a media-playback foreground service
+  (notification, with Leave for listeners) holding a wakelock and a Wi-Fi
+  lock, so audio and sync keep going with the screen off.
+- In the browser, hosting or listening holds a Screen Wake Lock (HTTPS
+  pages only); where that's unavailable the page asks to keep the tab open
+  and the screen on.
 - Browsers may block audio until the listener taps the page (autoplay
   policy); the join screen then shows **Tap to start audio**.
 - Keep the hosting tab open and visible — browsers throttle background tabs

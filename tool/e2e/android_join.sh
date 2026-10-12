@@ -158,14 +158,45 @@ if grep -q "USAGE_VOICE_COMMUNICATION" <<<"$STARTED"; then
 fi
 echo "PASS: the APK joined the web-hosted session and is playing media audio"
 
-# Stay in the session until the web host (logging into the same OUT dir) has
-# judged enough drift readings; leaving early cuts its sample short.
+# Turn the screen off: the session must keep playing and syncing (the app's
+# SessionService holds a foreground service, wakelock and Wi-Fi lock).
+adb shell input keyevent KEYCODE_SLEEP
+sleep 3
+SVC=$(adb shell dumpsys activity services "$PKG" | tr -d '\r' | grep -E "SessionService" || true)
+if [ -z "$SVC" ]; then
+  echo "FAIL: the session service isn't running" >&2
+  exit 1
+fi
+echo "Screen off; session service: $(head -n 1 <<<"$SVC" | sed 's/^ *//')"
+
+# Stay in the session (screen still off) until the web host, logging into the
+# same OUT dir, has judged enough fresh drift readings.
 HOST_LOG="$OUT/web-host.log"
+count_readings() { grep -cE "listener status (In sync|Catching up)" "$HOST_LOG" 2>/dev/null || true; }
 if [ -f "$HOST_LOG" ]; then
+  N0=$(count_readings)
   for ((i = 0; i < 120; i += 3)); do
-    N=$(grep -cE "listener status (In sync|Catching up)" "$HOST_LOG" || true)
-    [ "${N:-0}" -ge 10 ] && break
+    N=$(count_readings)
+    [ "$(( ${N:-0} - ${N0:-0} ))" -ge 10 ] && break
     sleep 3
   done
-  echo "Host has ${N:-0} drift readings"
+  echo "Host has $(( ${N:-0} - ${N0:-0} )) drift readings taken with the screen off"
+fi
+
+# Still playing as media with the screen off?
+OFF=$(adb shell dumpsys audio | tr -d '\r' | grep -E "u/pid:${UID_:-none}/.*state:started" || true)
+adb shell input keyevent KEYCODE_WAKEUP
+if [ -z "$OFF" ]; then
+  echo "FAIL: playback stopped with the screen off" >&2
+  exit 1
+fi
+echo "PASS: still playing with the screen off"
+
+# Let the host take a few readings with the screen back on, then have it
+# judge now — while this device is still alive. Readings taken while the
+# emulator shuts down (after this script) are not the app's.
+sleep 7
+if [ -n "${RUNNER_TEMP:-}" ]; then
+  touch "$RUNNER_TEMP/host-stop"
+  sleep 2
 fi

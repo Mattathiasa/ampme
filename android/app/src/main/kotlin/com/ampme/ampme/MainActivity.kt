@@ -17,6 +17,8 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL = "com.ampme/system_audio_capture"
         const val EVENTS = "com.ampme/system_audio_capture/events"
         const val MEDIA_CHANNEL = "com.ampme/media"
+        const val SESSION_CHANNEL = "com.ampme/session"
+        const val AUDIO_ROUTE_CHANNEL = "com.ampme/audio_route"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
 
@@ -62,6 +64,46 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread { result.success(out) }
                 }.start()
             }
+
+        // Where sound comes out, for per-speaker sync calibration.
+        AudioRouteMonitor(
+            this,
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_ROUTE_CHANNEL),
+        )
+
+        // Keeps a session running with the screen off (see SessionService).
+        val session = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SESSION_CHANNEL)
+        SessionService.onLeave = { runOnUiThread { session.invokeMethod("leave", null) } }
+        session.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val intent =
+                        Intent(this, SessionService::class.java)
+                            .putExtra(SessionService.EXTRA_TITLE, call.argument<String>("title"))
+                            .putExtra(SessionService.EXTRA_TEXT, call.argument<String>("text"))
+                            .putExtra(
+                                SessionService.EXTRA_CAN_LEAVE,
+                                call.argument<Boolean>("canLeave") ?: false,
+                            )
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        // E.g. not allowed from the background on Android 12+.
+                        result.success(false)
+                    }
+                }
+                "stop" -> {
+                    stopService(Intent(this, SessionService::class.java))
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(
