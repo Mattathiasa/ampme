@@ -5,6 +5,7 @@ import '../../core/network/signaling/cloud_signaling_channel.dart';
 import '../../core/network/signaling/relay_signaling_channel.dart';
 import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/observability/reporting.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../utils/join_code.dart';
 import 'sync_math.dart';
 import 'web_host_controller.dart';
@@ -99,6 +100,9 @@ class WebHostViewModel extends ChangeNotifier {
         joinCode: joinCode,
         joinLink: joinLink,
       );
+      // A sleeping screen throttles this tab, which would let listeners
+      // drift: keep it on while hosting.
+      await SessionKeepAlive.start(title: name, text: 'Hosting');
     } on SignalingException catch (e) {
       hostController.errorMessage = 'Couldn’t start the session: ${e.message}';
     } catch (e, st) {
@@ -158,12 +162,16 @@ class WebHostViewModel extends ChangeNotifier {
   Future<void> seek(Duration position) => hostController.seek(position);
   Future<void> setVolume(double volume) => hostController.setVolume(volume);
   Future<void> setSpeakerOffset(int ms) => hostController.setSpeakerOffset(ms);
-  Future<void> end() => hostController.end();
+  Future<void> end() async {
+    await SessionKeepAlive.stop();
+    await hostController.end();
+  }
   Future<void> startTabShare() => hostController.startTabShare();
   void stopTabShare() => hostController.stopTabShare();
 
   @override
   void dispose() {
+    SessionKeepAlive.stop();
     hostController.removeListener(notifyListeners);
     hostController.dispose();
     super.dispose();

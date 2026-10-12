@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/network/models/playback_state.dart';
 import '../../core/permissions/app_permissions.dart';
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/session/sync_nudge_store.dart';
 import '../../utils/platform_info.dart';
 import '../../theme/amp_tokens.dart';
@@ -273,6 +274,12 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
       children: [
         if (session.isReconnecting)
           const AlertStrip(message: 'Connection lost — reconnecting…', busy: true),
+        if (SessionKeepAlive.screenMayDim)
+          const AlertStrip(
+            message: 'Keep this tab open and the screen on — this browser can’t keep it awake, '
+                'and a sleeping tab falls out of sync.',
+            icon: Icons.light_mode_rounded,
+          ),
         if (session.needsAudioUnlock) ...[
           AmpButton(
             label: 'Tap to start audio',

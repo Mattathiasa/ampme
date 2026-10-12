@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/platform/session_keep_alive.dart';
 import '../../core/network/models/playback_state.dart';
 import '../../core/network/signaling/signaling_config.dart';
 import '../../theme/amp_tokens.dart';
@@ -309,6 +310,12 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         const SizedBox(height: 8),
       ],
       if (controller.errorMessage != null) AlertStrip(message: controller.errorMessage!),
+      if (SessionKeepAlive.screenMayDim)
+        const AlertStrip(
+          message: 'Keep this tab open and the screen on — this browser can’t keep it awake, '
+              'and a sleeping tab lets the phones drift.',
+          icon: Icons.light_mode_rounded,
+        ),
     ];
 
     final speakers = <Widget>[

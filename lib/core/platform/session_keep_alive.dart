@@ -2,10 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../observability/reporting.dart';
+import 'screen_wake_lock.dart';
 
-/// Keeps a session running with the screen off (Android): a foreground
-/// service with a notification, holding a wakelock and a Wi-Fi lock so audio
-/// and the sync loop don't stall when the phone locks. No-op elsewhere.
+/// Keeps a session running when the device would otherwise sleep.
+///
+/// Android: a foreground service with a notification, holding a wakelock
+/// and a Wi-Fi lock, so audio and the sync loop carry on with the screen
+/// off. Browser: a screen wake lock (a hidden or sleeping tab gets throttled,
+/// so the screen has to stay on); [screenMayDim] says when that isn't
+/// available, so the page can ask people to keep it open.
 class SessionKeepAlive {
   SessionKeepAlive._();
 
@@ -15,12 +20,19 @@ class SessionKeepAlive {
 
   static bool get _supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  /// True in a browser that couldn't keep the screen on.
+  static bool screenMayDim = false;
+
   /// Shows the session notification. [onLeave] adds a Leave action to it.
   static Future<void> start({
     required String title,
     required String text,
     VoidCallback? onLeave,
   }) async {
+    if (kIsWeb) {
+      screenMayDim = !await acquireScreenWakeLock();
+      return;
+    }
     if (!_supported) return;
     _onLeave = onLeave;
     _channel.setMethodCallHandler((call) async {
@@ -40,6 +52,11 @@ class SessionKeepAlive {
 
   static Future<void> stop() async {
     _onLeave = null;
+    if (kIsWeb) {
+      releaseScreenWakeLock();
+      screenMayDim = false;
+      return;
+    }
     if (!_supported || !_active) return;
     _active = false;
     try {

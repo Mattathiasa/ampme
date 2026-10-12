@@ -301,6 +301,7 @@ class JoinViewModel extends ChangeNotifier {
         text: 'Playing in sync — keeps going with the screen off.',
         onLeave: () => unawaited(leave()),
       );
+      notifyListeners(); // the page may need its keep-the-screen-on hint
     }());
   }
 
