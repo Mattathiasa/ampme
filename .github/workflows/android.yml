@@ -201,11 +201,13 @@ jobs:
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — keeps playing with the screen off.
+          **Ampme v$VERSION** — sessions that don't drop out.
 
-          - **Lock your phone, the party keeps going:** while hosting or listening, Ampme now runs as a media-playback service (with a notification) and keeps the CPU and Wi-Fi awake, so audio and sync carry on with the screen off. Listeners can leave from the notification.
-          - **The web app keeps the screen on** while hosting or listening (a sleeping tab falls out of sync); where the browser can't, it says to keep the tab open.
-          - Includes v1.7.3: browser listeners read the real playhead (no hidden 0.1 s lag), plus v1.7.2's calibration fix and connection retry.
+          - **Lock your phone, the party keeps going:** while hosting or listening, Ampme runs as a media-playback service (with a notification) and keeps the CPU and Wi-Fi awake, so audio and sync carry on with the screen off. Listeners can leave from the notification.
+          - **Reloading the web host page no longer ends the session:** the page offers "Resume session" and picks up the same code, song and spot. Phones keep playing meanwhile (up to 90 s) and reconnect on their own, without a cut. Only **End session** ends it for everyone — closing the tab without it leaves phones playing for up to 90 s.
+          - **Sync timing per speaker:** the phone speaker, headphones and each Bluetooth speaker keep their own calibration (Bluetooth adds 150–300 ms). Switch speakers mid-song and the timing switches with it; a new speaker gets a calibrate suggestion. The web host's own speaker does the same.
+          - **The web app keeps the screen on** while hosting or listening; where the browser can't, it says to keep the tab open.
+          - Fixes: a host reconnect could pause a listener's music; a fresh connection could jump a phone by seconds before its clock was synced.
 
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 
