@@ -18,6 +18,7 @@ class MainActivity : FlutterActivity() {
         const val EVENTS = "com.ampme/system_audio_capture/events"
         const val MEDIA_CHANNEL = "com.ampme/media"
         const val SESSION_CHANNEL = "com.ampme/session"
+        const val AUDIO_ROUTE_CHANNEL = "com.ampme/audio_route"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
 
@@ -63,6 +64,12 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread { result.success(out) }
                 }.start()
             }
+
+        // Where sound comes out, for per-speaker sync calibration.
+        AudioRouteMonitor(
+            this,
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_ROUTE_CHANNEL),
+        )
 
         // Keeps a session running with the screen off (see SessionService).
         val session = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SESSION_CHANNEL)

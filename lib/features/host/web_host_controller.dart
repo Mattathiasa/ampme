@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -14,6 +15,7 @@ import '../../core/network/signaling/signaling_channel.dart';
 import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
+import '../../core/platform/audio_route.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/sync/chirp_player.dart';
 import '../../utils/id_generator.dart';
@@ -162,18 +164,54 @@ class WebHostController extends ChangeNotifier {
   bool signalingLost = false;
 
   /// Shifts this browser's own speaker relative to the shared timeline (ms).
-  /// Remembered in this browser across sessions.
-  int speakerOffsetMs = _loadSpeakerOffset();
+  /// Remembered in this browser across sessions, per output (headphones,
+  /// a Bluetooth speaker and the laptop's own speakers each have their own
+  /// delay).
+  int speakerOffsetMs = 0;
 
-  static int _loadSpeakerOffset() {
+  /// The output [speakerOffsetMs] belongs to.
+  AudioRoute speakerRoute = const AudioRoute('web:default', 'This browser');
+  StreamSubscription<AudioRoute>? _routeSub;
+
+  static const _speakerOffsetsKey = 'ampme.speakerOffsetByRoute';
+
+  static Map<String, dynamic> _readSpeakerOffsets() {
     try {
-      final v = int.tryParse(
-        web.window.localStorage.getItem(_speakerOffsetStorageKey) ?? '',
-      );
-      return (v ?? 0).clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs);
+      final raw = web.window.localStorage.getItem(_speakerOffsetsKey);
+      return raw == null ? {} : Map<String, dynamic>.from(jsonDecode(raw) as Map);
     } catch (_) {
-      return 0; // storage blocked (private mode etc.)
+      return {}; // storage blocked (private mode etc.)
     }
+  }
+
+  /// Switches to [route]'s saved offset (moving the speaker live if playing).
+  void _useSpeakerRoute(AudioRoute route) {
+    final offsets = _readSpeakerOffsets();
+    if (!offsets.containsKey(route.key)) {
+      // Before 1.8 one offset was kept for the browser: it belongs to the
+      // first output seen.
+      try {
+        final legacy = int.tryParse(
+          web.window.localStorage.getItem(_speakerOffsetStorageKey) ?? '',
+        );
+        if (legacy != null) {
+          offsets[route.key] = legacy;
+          web.window.localStorage
+            ..setItem(_speakerOffsetsKey, jsonEncode(offsets))
+            ..removeItem(_speakerOffsetStorageKey);
+        }
+      } catch (_) {}
+    }
+    speakerRoute = route;
+    final saved = (offsets[route.key] as num?)?.toInt() ?? 0;
+    unawaited(setSpeakerOffset(saved, save: false));
+  }
+
+  /// Uses the current output's offset and follows output changes.
+  Future<void> _followSpeakerRoute() async {
+    _useSpeakerRoute(await AudioRoutes.current());
+    await _routeSub?.cancel();
+    _routeSub = AudioRoutes.changes.listen(_useSpeakerRoute);
   }
 
   // ---- Track / playback ----
@@ -357,6 +395,7 @@ class WebHostController extends ChangeNotifier {
       _resumeSaveTimer = Timer.periodic(const Duration(seconds: 2), (_) => _saveTimeline());
     }
     _installPageHideHook();
+    unawaited(_followSpeakerRoute());
     _notify();
   }
 
@@ -611,11 +650,16 @@ class WebHostController extends ChangeNotifier {
   }
 
   /// Moves this browser's speaker relative to the phones, live.
-  Future<void> setSpeakerOffset(int ms) async {
-    speakerOffsetMs = ms.clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs);
-    try {
-      web.window.localStorage.setItem(_speakerOffsetStorageKey, '$speakerOffsetMs');
-    } catch (_) {}
+  Future<void> setSpeakerOffset(int ms, {bool save = true}) async {
+    final next = ms.clamp(minSpeakerOffsetMs, maxSpeakerOffsetMs);
+    if (!save && next == speakerOffsetMs) return;
+    speakerOffsetMs = next;
+    if (save) {
+      final offsets = _readSpeakerOffsets()..[speakerRoute.key] = speakerOffsetMs;
+      try {
+        web.window.localStorage.setItem(_speakerOffsetsKey, jsonEncode(offsets));
+      } catch (_) {}
+    }
     if (playbackState == PlaybackState.playing && _source != null) {
       // Re-start the local source on the same timeline with the new offset.
       final at = _nowMs() + 60;
@@ -1551,6 +1595,8 @@ class WebHostController extends ChangeNotifier {
   /// the controller to its idle state so a new session can be started.
   Future<void> end() async {
     _resumeSaveTimer?.cancel();
+    unawaited(_routeSub?.cancel());
+    _routeSub = null;
     _resumeSaveTimer = null;
     if (_resumable) SessionResumeStore.clear();
     _resumable = false;

@@ -191,3 +191,12 @@ if [ -z "$OFF" ]; then
   exit 1
 fi
 echo "PASS: still playing with the screen off"
+
+# Let the host take a few readings with the screen back on, then have it
+# judge now — while this device is still alive. Readings taken while the
+# emulator shuts down (after this script) are not the app's.
+sleep 7
+if [ -n "${RUNNER_TEMP:-}" ]; then
+  touch "$RUNNER_TEMP/host-stop"
+  sleep 2
+fi
