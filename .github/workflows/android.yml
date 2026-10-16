@@ -275,16 +275,19 @@ jobs:
             SIGNING_NOTE="> **Signed with a temporary key:** uninstall the previous version before installing this one; later releases will update in place."
           fi
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          **Ampme v$VERSION** — sessions that don't drop out.
+          **Ampme v$VERSION** — songs start fast, and the room is yours to run.
 
-          - **Lock your phone, the party keeps going:** while hosting or listening, Ampme runs as a media-playback service (with a notification) and keeps the CPU and Wi-Fi awake, so audio and sync carry on with the screen off. Listeners can leave from the notification.
-          - **Reloading the web host page no longer ends the session:** the page offers "Resume session" and picks up the same code, song and spot. Phones keep playing meanwhile (up to 90 s) and reconnect on their own, without a cut. Only **End session** ends it for everyone — closing the tab without it leaves phones playing for up to 90 s.
-          - **Sync timing per speaker:** the phone speaker, headphones and each Bluetooth speaker keep their own calibration (Bluetooth adds 150–300 ms). Switch speakers mid-song and the timing switches with it; a new speaker gets a calibrate suggestion. The web host's own speaker does the same.
-          - **The web app keeps the screen on** while hosting or listening; where the browser can't, it says to keep the tab open.
-          - Fixes: a host reconnect could pause a listener's music; a fresh connection could jump a phone by seconds before its clock was synced.
+          - **Songs start while they're still arriving:** phones that join a WAV or a video's sound begin on the first seconds instead of waiting for the whole file (browsers on HTTPS). Other formats still wait for the full copy.
+          - **Titles, artists and covers:** shown on every device and on the lock screen, read from the song's own tags (MP3, M4A/MP4, FLAC).
+          - **Name your device, remove a device:** a listener can set the name the host sees; the host can remove any device from its list, and it can't rejoin.
+          - **Clear failures:** plain-language messages instead of error text, a "Try again" for a song that failed to load, and "Can't connect directly" when a device is on another network. **Copy diagnostics** puts a scrubbed report on the clipboard for bug reports.
+          - **Android host:** no audio-library permission just to host, and an **End session** button (Back asks first).
+          - **Safer and sturdier:** a host that sends bad data can't exhaust a phone's memory, the LAN relay checks who may host, a stalled copy gives up with a message, and several connection and lifecycle bugs are fixed.
+          - **Easier to use:** screen-reader labels, pinch-zoom on the web app, and layouts that hold up at 200 % text size.
+          - Ampme is now MIT licensed and has a privacy page.
 
           $SIGNING_NOTE
-          > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
+          > Older versions still join sessions hosted by this one, but without the new features: update everyone to get them. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 
           ## Downloads
           - **ampme-arm64-v8a.apk** — most modern phones
