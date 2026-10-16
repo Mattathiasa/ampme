@@ -10,11 +10,23 @@ import 'receive_sink.dart';
 /// directory afterwards.
 class FileReceiveSink implements ReceiveSink {
   FileReceiveSink({required this.trackId, String? name, this.mime, int size = 0}) {
-    final safe = (name == null || name.isEmpty ? trackId : name)
+    // The name comes from the host: keep it a plain file name (no path
+    // pieces, no "." or "..", no more than the OS allows, keeping the end
+    // so the extension survives).
+    var safe = (name == null || name.isEmpty ? trackId : name)
         .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    if (safe.length > 100) safe = safe.substring(safe.length - 100);
+    if (safe.replaceAll('.', '').isEmpty) safe = 'song';
     _dir = Directory.systemTemp.createTempSync('ampme_');
     _file = File('${_dir.path}/$safe');
-    _out = _file.openSync(mode: FileMode.write);
+    try {
+      _out = _file.openSync(mode: FileMode.write);
+    } catch (_) {
+      try {
+        _dir.deleteSync(recursive: true);
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   final String trackId;

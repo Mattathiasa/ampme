@@ -128,7 +128,7 @@ void main() {
       final growing = await r.waitForStart('t');
       final waiting = growing.read(5000, 6000);
       r.handleText(FileTransferFrames.start(trackId: 'u', size: 10, mime: 'audio/wav'));
-      await expectLater(waiting, throwsA(isA<StateError>()));
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
       expect(growing.failed, isTrue);
     });
   });

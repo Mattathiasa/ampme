@@ -71,4 +71,95 @@ void main() {
     File.fromUri(file.uri!).parent.deleteSync(recursive: true);
     receiver.dispose();
   });
+
+  group('a host cannot make the listener over-commit', () {
+    test('a song larger than the limit is refused, and its bytes ignored', () async {
+      final receiver = FileReceiver(maxFileBytes: 1000);
+      final waiting = receiver.waitFor('big');
+      receiver.handleText(FileTransferFrames.start(trackId: 'big', size: 5000));
+      receiver.handleBinary(_bytes(500)); // no transfer is open: dropped
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
+      expect(receiver.receivingTrackId, isNull);
+      receiver.dispose();
+    });
+
+    test('a negative or missing size is refused', () async {
+      final receiver = FileReceiver();
+      final waiting = receiver.waitFor('x');
+      receiver.handleText('{"type":"file-start","trackId":"x","size":-4}');
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
+      receiver.handleText('{"type":"file-start","trackId":"y"}');
+      expect(receiver.receivingTrackId, isNull);
+      receiver.dispose();
+    });
+
+    test('more bytes than announced abort the transfer instead of writing on', () async {
+      final receiver = FileReceiver();
+      final waiting = receiver.waitFor('o');
+      receiver.handleText(FileTransferFrames.start(trackId: 'o', size: 100));
+      receiver.handleBinary(_bytes(60));
+      receiver.handleBinary(_bytes(60)); // 120 > 100
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
+      expect(receiver.receivingTrackId, isNull);
+      receiver.dispose();
+    });
+
+    test('a sink that cannot be made leaves nothing half-started', () async {
+      var calls = 0;
+      final receiver = FileReceiver(sinkFactory: ({required trackId, name, mime, size = 0}) {
+        if (calls++ == 0) throw const FileSystemException('disk full');
+        return MemoryReceiveSink(trackId: trackId, size: size);
+      });
+      final waiting = receiver.waitFor('a');
+      receiver.handleText(FileTransferFrames.start(trackId: 'a', size: 10));
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
+      expect(receiver.receivingTrackId, isNull);
+      // The next song is received normally.
+      receiver.handleText(FileTransferFrames.start(trackId: 'b', size: 10));
+      receiver.handleBinary(_bytes(10));
+      receiver.handleText(FileTransferFrames.end('b'));
+      expect((await receiver.waitFor('b')).bytes!.length, 10);
+      receiver.dispose();
+    });
+
+    test('a transfer that stops arriving is given up on', () async {
+      final receiver = FileReceiver(stallTimeout: const Duration(milliseconds: 80));
+      final waiting = receiver.waitFor('s');
+      receiver.handleText(FileTransferFrames.start(trackId: 's', size: 100));
+      receiver.handleBinary(_bytes(10));
+      await expectLater(waiting, throwsA(isA<FileTransferException>()));
+      expect(receiver.receivingTrackId, isNull);
+      receiver.dispose();
+    });
+
+    test('a new song ends the wait for the old one; the same song keeps it', () async {
+      final receiver = FileReceiver();
+      final oldWait = receiver.waitFor('old');
+      receiver.handleText(FileTransferFrames.start(trackId: 'old', size: 100));
+      receiver.handleBinary(_bytes(10));
+      // The host re-sends the same song (a reconnect): still waiting.
+      receiver.handleText(FileTransferFrames.start(trackId: 'old', size: 100));
+      var settled = false;
+      oldWait.then((_) => settled = true, onError: (_) => settled = true).ignore();
+      await pumpEventQueue();
+      expect(settled, isFalse);
+      // A different song supersedes it.
+      receiver.handleText(FileTransferFrames.start(trackId: 'new', size: 10));
+      await expectLater(oldWait, throwsA(isA<FileTransferException>()));
+      receiver.dispose();
+    });
+  });
+
+  test('a hostile file name stays a plain name inside its own temp folder', () async {
+    for (final name in ['..', '.', '', '../../etc/passwd', 'a' * 400 + '.mp3']) {
+      final sink = FileReceiveSink(trackId: 't', name: name);
+      final file = (await (sink..writeAt(0, _bytes(4))).finish()).uri!;
+      final path = file.toFilePath();
+      final dir = File(path).parent;
+      expect(dir.path, startsWith(Directory.systemTemp.path), reason: name);
+      expect(path.split('/').last.length, lessThanOrEqualTo(100), reason: name);
+      expect(File(path).existsSync(), isTrue, reason: name);
+      dir.deleteSync(recursive: true);
+    }
+  });
 }
