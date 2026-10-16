@@ -42,42 +42,46 @@ class DeviceTile extends StatelessWidget {
         children: [
           Row(
             children: [
-              AnimatedContainer(
-                duration: AmpTokens.medium,
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: playing ? tokens.volt : tokens.hairline,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: playing ? tokens.glow(tokens.volt, radius: 16) : const [],
-                ),
-                child: Center(
-                  child: playing
-                      ? Icon(Icons.graphic_eq_rounded, size: 24, color: tokens.onVolt)
-                      : Icon(icon, size: 22, color: tokens.textDim),
+              ExcludeSemantics(
+                child: AnimatedContainer(
+                  duration: AmpTokens.medium,
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: playing ? tokens.volt : tokens.hairline,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: playing ? tokens.glow(tokens.volt, radius: 16) : const [],
+                  ),
+                  child: Center(
+                    child: playing
+                        ? Icon(Icons.graphic_eq_rounded, size: 24, color: tokens.onVolt)
+                        : Icon(icon, size: 22, color: tokens.textDim),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      status,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: statusColor ?? tokens.textDim,
-                        fontWeight: statusColor == null ? null : FontWeight.w600,
-                        fontFeatures: AmpTokens.tabular,
+                child: MergeSemantics(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Text(
+                        status,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: statusColor ?? tokens.textDim,
+                          fontWeight: statusColor == null ? null : FontWeight.w600,
+                          fontFeatures: AmpTokens.tabular,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               if (trailing != null) ...[const SizedBox(width: 10), trailing!],

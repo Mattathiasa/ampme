@@ -645,13 +645,17 @@ class _SpeakerOffsetCard extends StatelessWidget {
                 onPressed: offsetMs > minSpeakerOffsetMs ? () => nudge(-10) : null,
               ),
               Expanded(
-                child: Slider(
-                  value: offsetMs.toDouble(),
-                  min: minSpeakerOffsetMs.toDouble(),
-                  max: maxSpeakerOffsetMs.toDouble(),
-                  divisions: (maxSpeakerOffsetMs - minSpeakerOffsetMs) ~/ 10,
-                  label: label,
-                  onChanged: (v) => onChanged(v.round()),
+                child: Semantics(
+                  label: 'Timing of this computer',
+                  child: Slider(
+                    value: offsetMs.toDouble(),
+                    min: minSpeakerOffsetMs.toDouble(),
+                    max: maxSpeakerOffsetMs.toDouble(),
+                    divisions: (maxSpeakerOffsetMs - minSpeakerOffsetMs) ~/ 10,
+                    label: label,
+                    semanticFormatterCallback: (v) => '${v.round()} milliseconds',
+                    onChanged: (v) => onChanged(v.round()),
+                  ),
                 ),
               ),
               IconButton(

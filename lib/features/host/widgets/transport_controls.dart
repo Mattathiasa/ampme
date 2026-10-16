@@ -93,20 +93,25 @@ class TransportControls extends StatelessWidget {
             ],
           ),
         const SizedBox(height: 8),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 5,
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-            thumbShape: RoundSliderThumbShape(enabledThumbRadius: seekHandler == null ? 0 : 8),
-            disabledActiveTrackColor: tokens.volt,
-            disabledInactiveTrackColor: tokens.hairline,
-          ),
-          child: Slider(
-            value: positionMs.toDouble(),
-            max: durationMs.toDouble(),
-            onChanged: seekHandler == null
-                ? null
-                : (value) => seekHandler(Duration(milliseconds: value.round())),
+        Semantics(
+          label: 'Song position',
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 5,
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              thumbShape: RoundSliderThumbShape(enabledThumbRadius: seekHandler == null ? 0 : 8),
+              disabledActiveTrackColor: tokens.volt,
+              disabledInactiveTrackColor: tokens.hairline,
+            ),
+            child: Slider(
+              value: positionMs.toDouble(),
+              max: durationMs.toDouble(),
+              semanticFormatterCallback: (v) =>
+                  '${formatDuration(Duration(milliseconds: v.round()))} of ${formatDuration(duration)}',
+              onChanged: seekHandler == null
+                  ? null
+                  : (value) => seekHandler(Duration(milliseconds: value.round())),
+            ),
           ),
         ),
         Padding(
@@ -194,7 +199,14 @@ class VolumeRow extends StatelessWidget {
       children: [
         Icon(Icons.volume_mute_rounded, color: dim, size: 20),
         Expanded(
-          child: Slider(value: volume.clamp(0.0, 1.0), onChanged: onChanged),
+          child: Semantics(
+            label: 'Volume',
+            child: Slider(
+              value: volume.clamp(0.0, 1.0),
+              semanticFormatterCallback: (v) => '${(v * 100).round()} percent',
+              onChanged: onChanged,
+            ),
+          ),
         ),
         Icon(Icons.volume_up_rounded, color: dim, size: 20),
       ],

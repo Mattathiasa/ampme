@@ -636,13 +636,17 @@ class _SyncNudgeCard extends StatelessWidget {
                 onPressed: nudgeMs > minSyncNudgeMs ? () => step(-10) : null,
               ),
               Expanded(
-                child: Slider(
-                  value: nudgeMs.toDouble(),
-                  min: minSyncNudgeMs.toDouble(),
-                  max: maxSyncNudgeMs.toDouble(),
-                  divisions: (maxSyncNudgeMs - minSyncNudgeMs) ~/ 10,
-                  label: label,
-                  onChanged: (v) => onChanged(v.round()),
+                child: Semantics(
+                  label: 'Timing on this device',
+                  child: Slider(
+                    value: nudgeMs.toDouble(),
+                    min: minSyncNudgeMs.toDouble(),
+                    max: maxSyncNudgeMs.toDouble(),
+                    divisions: (maxSyncNudgeMs - minSyncNudgeMs) ~/ 10,
+                    label: label,
+                    semanticFormatterCallback: (v) => '${v.round()} milliseconds',
+                    onChanged: (v) => onChanged(v.round()),
+                  ),
                 ),
               ),
               IconButton(

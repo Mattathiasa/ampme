@@ -67,14 +67,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           const AmpLogo(size: 40),
                           const SizedBox(width: 12),
-                          Text(
-                            'AMPME',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontFamily: AmpTokens.display,
-                              letterSpacing: 2,
+                          Expanded(
+                            child: Text(
+                              'AMPME',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontFamily: AmpTokens.display,
+                                letterSpacing: 2,
+                              ),
                             ),
                           ),
-                          const Spacer(),
                           LivePill(label: kIsWeb ? 'Any browser' : 'Same WiFi', pulsing: false),
                         ],
                       ),

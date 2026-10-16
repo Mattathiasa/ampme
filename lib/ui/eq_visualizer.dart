@@ -157,16 +157,19 @@ class EqVisualizerState extends State<EqVisualizer> {
   @override
   Widget build(BuildContext context) {
     final tokens = AmpTokens.of(context);
-    return RepaintBoundary(
-      child: SizedBox(
-        height: widget.height,
-        width: double.infinity,
-        child: CustomPaint(
-          painter: _EqPainter(
-            levels: _levels,
-            repaint: _repaint,
-            color: widget.color ?? tokens.volt,
-            peak: tokens.signal,
+    // Decoration only: a screen reader has nothing to say about the bars.
+    return ExcludeSemantics(
+      child: RepaintBoundary(
+        child: SizedBox(
+          height: widget.height,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _EqPainter(
+              levels: _levels,
+              repaint: _repaint,
+              color: widget.color ?? tokens.volt,
+              peak: tokens.signal,
+            ),
           ),
         ),
       ),
