@@ -137,6 +137,10 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   @override
   bool get isReconnecting => _session.isReconnecting;
   @override
+  String? get loadProblem => _session.loadProblem;
+  @override
+  Future<void> retryLoad() => _session.retryLoad();
+  @override
   bool get connectProblem => _connectProblem && !_peerConnected && !hostLeft;
   @override
   int? get clockOffsetMs => _session.clockOffsetMs;

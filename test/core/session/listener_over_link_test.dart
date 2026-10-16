@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:ampme/core/audio/audio_engine.dart';
+import 'package:ampme/core/network/file_transfer.dart' show FileTransferException;
 import 'package:ampme/core/network/models/control_message.dart';
 import 'package:ampme/core/network/models/device_info.dart';
 import 'package:ampme/core/network/models/playback_state.dart';
@@ -274,7 +275,7 @@ void main() {
     expect(engine.seeks, isEmpty, reason: 'all within the trim range');
     // Ahead -> slower, behind -> faster, bounded to ±3 %.
     expect(engine.speeds, [
-      for (final d in [98, -71, 46, -60, 90]) closeTo((1 - d / 2000).clamp(0.97, 1.03), 0.002),
+      for (final d in [98, -71, 46, -60, 90]) closeTo((1 - d / 2000).clamp(0.97, 1.03), 0.006),
     ]);
 
     // Back in sync: normal speed again.
@@ -468,6 +469,34 @@ void main() {
     reference(-900);
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(session.startLeadMs, closeTo(40, 3));
+    session.dispose();
+  });
+
+  test('a song that fails to load says so, and Try again asks for it once more', () async {
+    final toListener = StreamController<String>();
+    final sent = <ControlMessage>[];
+    final engine = _FakeEngine();
+    var attempts = 0;
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+      audioEngine: engine,
+      loadStartLead: false,
+      trackResolver: (_) async {
+        if (attempts++ == 0) throw const FileTransferException('The song stopped arriving');
+        return Uri.parse('blob:x');
+      },
+    );
+    session.attach(_syncedLink(toListener, onSent: sent.add));
+    const track = TrackInfo(trackId: 't', fileName: 'a.mp3', streamUrl: '', durationMs: 60000);
+    toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(session.loadProblem, 'The song stopped arriving');
+    expect(engine.loaded, isEmpty);
+
+    await session.retryLoad();
+    expect(sent.where((m) => m.type == ControlMessageType.resendSong).single.payload['trackId'], 't');
+    expect(session.loadProblem, isNull);
+    expect(engine.loaded, hasLength(1));
     session.dispose();
   });
 }

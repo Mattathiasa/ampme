@@ -19,6 +19,7 @@ import '../../core/platform/audio_route.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/sync/chirp_player.dart';
 import '../../utils/id_generator.dart';
+import '../../utils/friendly_error.dart';
 import '../../core/audio/live_pcm_player.dart';
 import '../../core/audio/pcm_ring.dart';
 import '../../core/network/live_frames.dart';
@@ -490,8 +491,8 @@ class WebHostController extends ChangeNotifier {
       preparingSoundProgress = null;
       errorMessage = e is StateError
           ? e.message
-          : 'Could not read the sound in that file '
-              '(is it a format this browser plays?): $e';
+          : 'Couldn’t read the sound in that file. Is it a format this '
+              'browser can play? (MP3, M4A, WAV, FLAC, OGG, and most videos work.)';
       reportError(e, st, context: 'webHost.loadTrack');
       _notify();
     } finally {
@@ -607,7 +608,7 @@ class WebHostController extends ChangeNotifier {
         anchorWallMs: wallMs,
       );
     } catch (e, st) {
-      errorMessage = 'Playback failed: $e';
+      errorMessage = 'Couldn’t start playback. ${friendlyError(e)}';
       reportError(e, st, context: 'webHost.resumePlayback');
       _notify();
     }
@@ -628,7 +629,7 @@ class WebHostController extends ChangeNotifier {
       final atEnd = position.inMilliseconds >= track.durationMs - 50;
       await _synchronizedStart(atEnd ? Duration.zero : position, asSeek: false);
     } catch (e, st) {
-      errorMessage = 'Playback failed: $e';
+      errorMessage = 'Couldn’t start playback. ${friendlyError(e)}';
       reportError(e, st, context: 'webHost.play');
       _notify();
     }
@@ -894,7 +895,7 @@ class WebHostController extends ChangeNotifier {
       final cancelled = e.toString().contains('NotAllowedError') ||
           e.toString().contains('AbortError');
       if (!cancelled) {
-        errorMessage = e is StateError ? e.message : 'Could not share that tab: $e';
+        errorMessage = e is StateError ? e.message : 'Couldn’t share that tab. ${friendlyError(e)}';
         reportError(e, st, context: 'webHost.startTabShare');
       }
       _notify();
@@ -1209,9 +1210,24 @@ class WebHostController extends ChangeNotifier {
         _handleStatus(listener, message.payload);
       case ControlMessageType.calibrate:
         _playCalibrationChirp(id);
+      case ControlMessageType.resendSong:
+        _resendSong(id, message.payload['trackId']);
       default:
         break;
     }
+  }
+
+  /// A listener says the song did not arrive: send it again (unless a
+  /// transfer to it is still running).
+  void _resendSong(String id, Object? trackId) {
+    final peer = _peers[id];
+    final track = currentTrack;
+    if (peer == null || track == null || trackId != track.trackId) return;
+    if (peer.sendingTrackId == track.trackId) return;
+    peer
+      ..sentTrackId = null
+      ..sentBytes = 0;
+    unawaited(_sendFile(id));
   }
 
   /// A listener is calibrating with its mic: play the host chirp through
@@ -1567,7 +1583,7 @@ class WebHostController extends ChangeNotifier {
         unawaited(_connectPeer(id));
       });
     } catch (e, st) {
-      errorMessage = 'Listener connection failed: $e';
+      errorMessage = 'Couldn’t connect a device. It can try again by joining anew.';
       reportError(e, st, context: 'webHost.connectPeer');
       // No half-made peer, no "Connecting…" row that never ends: if the
       // device announces itself again it gets a fresh try.

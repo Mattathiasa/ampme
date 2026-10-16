@@ -21,7 +21,11 @@ enum ControlMessageType {
   /// Mic calibration. Listener -> host: "play the calibration chirp" (no
   /// payload). Host -> listener: when it will (`chirpAtHostTimeMs`).
   /// Hosts that predate this drop it as an unknown frame.
-  calibrate;
+  calibrate,
+
+  /// Listener -> host (browser-hosted sessions): the song did not arrive;
+  /// send it again. Hosts that predate this drop it as an unknown frame.
+  resendSong;
 
   String toJsonValue() => name;
 
@@ -266,6 +270,16 @@ class ControlMessage {
   }
 
   // ---- Listener -> host ----
+
+  /// The song [trackId] did not arrive (a stalled or refused transfer): send
+  /// it again.
+  factory ControlMessage.resendSong({required String senderId, required String trackId}) {
+    return ControlMessage(
+      type: ControlMessageType.resendSong,
+      senderId: senderId,
+      payload: {'trackId': trackId},
+    );
+  }
 
   factory ControlMessage.clockSyncRequest({
     required String senderId,

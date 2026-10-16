@@ -21,6 +21,7 @@ import '../../core/sync/acoustic_calibration.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../utils/join_code.dart';
+import '../../utils/friendly_error.dart';
 import '../../utils/platform_info.dart';
 
 /// Whether this is the web build served over HTTPS (e.g. GitHub Pages).
@@ -181,7 +182,7 @@ class JoinViewModel extends ChangeNotifier {
     } catch (e, st) {
       controller?.removeListener(_sessionChanged);
       controller?.dispose();
-      errorMessage = 'Failed to join web session: $e';
+      errorMessage = 'Couldn’t join the session. ${friendlyError(e)}';
       reportError(e, st, context: 'joinWebSession');
     } finally {
       isConnecting = false;
@@ -204,7 +205,7 @@ class JoinViewModel extends ChangeNotifier {
       await _applyRouteTiming();
       _keepAlive();
     } catch (e, st) {
-      errorMessage = 'Failed to join session: $e';
+      errorMessage = 'Couldn’t join the session. ${friendlyError(e)}';
       reportError(e, st, context: 'joinSession');
     } finally {
       isConnecting = false;
@@ -337,7 +338,7 @@ class JoinViewModel extends ChangeNotifier {
     } on CalibrationException catch (e) {
       calibrationMessage = e.message;
     } catch (e, st) {
-      calibrationMessage = 'Calibration failed: $e';
+      calibrationMessage = 'Calibration didn’t work. ${friendlyError(e)}';
       reportError(e, st, context: 'calibrateWithMic');
     } finally {
       calibrationRun = null;

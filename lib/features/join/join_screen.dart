@@ -360,6 +360,37 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           ),
           const SizedBox(height: 16),
         ],
+        if (session.loadProblem case final problem?) ...[
+          GlassCard(
+            accent: tokens.signal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.error_outline_rounded, color: tokens.signal),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text('Couldn’t load the song', style: theme.textTheme.titleSmall),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  problem,
+                  style: theme.textTheme.bodySmall?.copyWith(color: tokens.textDim),
+                ),
+                const SizedBox(height: 12),
+                AmpButton(
+                  label: 'Try again',
+                  icon: Icons.refresh_rounded,
+                  onPressed: session.retryLoad,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (track?.hasVideo ?? false) ...[
           GlassCard(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

@@ -36,6 +36,13 @@ abstract class ActiveSession extends ChangeNotifier {
   /// True while the control connection is being re-established.
   bool get isReconnecting;
 
+  /// Why the current song could not be loaded, if it could not (it never
+  /// arrived, or this device could not play it). Null while all is well.
+  String? get loadProblem;
+
+  /// Tries to load the current song again.
+  Future<void> retryLoad();
+
   /// The host answered but a direct connection never came up (typically
   /// the two devices are on different networks).
   bool get connectProblem;

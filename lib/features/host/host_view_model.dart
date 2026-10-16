@@ -11,6 +11,7 @@ import '../../core/platform/session_keep_alive.dart';
 import '../../core/session/host_session_controller.dart';
 import '../../utils/id_generator.dart';
 import '../../core/media/video_audio_extractor.dart';
+import '../../utils/friendly_error.dart';
 import 'sync_math.dart';
 
 /// Wraps [HostSessionController] with the UI-facing concerns a
@@ -71,7 +72,7 @@ class HostViewModel extends ChangeNotifier {
         onLeave: () => unawaited(endSession()),
       ));
     } catch (e, st) {
-      errorMessage = 'Failed to start session: $e';
+      errorMessage = 'Couldn’t start the session. ${friendlyError(e)}';
       reportError(e, st, context: 'startSession');
     } finally {
       isStarting = false;
@@ -107,7 +108,7 @@ class HostViewModel extends ChangeNotifier {
         await hostController.loadTrack(File(path), fileName: picked.name);
       }
     } catch (e, st) {
-      errorMessage = 'Failed to load track: $e';
+      errorMessage = 'Couldn’t load that song. ${friendlyError(e)}';
       reportError(e, st, context: 'pickAndLoadTrack');
     } finally {
       isPickingFile = false;
@@ -144,7 +145,7 @@ class HostViewModel extends ChangeNotifier {
         await hostController.startSystemAudioBroadcast();
       }
     } catch (e, st) {
-      errorMessage = 'Device audio broadcast failed: $e';
+      errorMessage = 'Couldn’t broadcast the device’s audio. ${friendlyError(e)}';
       reportError(e, st, context: 'toggleSystemAudioBroadcast');
     } finally {
       isTogglingSystemAudio = false;
@@ -173,7 +174,7 @@ class HostViewModel extends ChangeNotifier {
         await hostController.startLiveBroadcast();
       }
     } catch (e, st) {
-      errorMessage = 'Live broadcast failed: $e';
+      errorMessage = 'Couldn’t start the live broadcast. ${friendlyError(e)}';
       reportError(e, st, context: 'toggleLiveBroadcast');
     } finally {
       isTogglingLive = false;

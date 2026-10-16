@@ -6,6 +6,7 @@ import '../audio/audio_engine.dart';
 import '../audio/just_audio_engine.dart';
 import '../observability/diagnostics.dart';
 import '../observability/reporting.dart';
+import '../../utils/friendly_error.dart';
 import '../network/control_client.dart';
 import '../network/control_link.dart';
 import 'active_session.dart';
@@ -389,6 +390,7 @@ class ListenerSessionController extends ChangeNotifier
           reply.complete(message.payload['chirpAtHostTimeMs'] as int?);
         }
       case ControlMessageType.ready:
+      case ControlMessageType.resendSong:
       case ControlMessageType.clockSyncRequest:
       case ControlMessageType.clockSyncResponse:
       case ControlMessageType.listenerStatusUpdate:
@@ -554,7 +556,35 @@ class ListenerSessionController extends ChangeNotifier
     return load;
   }
 
+  /// Set when the song could not be loaded (it never arrived, or this
+  /// device could not play it); cleared by a new load. The page offers Retry.
+  @override
+  String? loadProblem;
+
+  void _setLoadProblem(String? problem) {
+    if (loadProblem == problem) return;
+    loadProblem = problem;
+    notifyListeners();
+  }
+
+  /// Tries the song again: asks a browser host to send it once more, then
+  /// loads it and, if the host is playing, joins at the host's spot.
+  @override
+  Future<void> retryLoad() async {
+    final track = currentTrack;
+    if (track == null) return;
+    _setLoadProblem(null);
+    _client?.send(ControlMessage.resendSong(senderId: selfDevice.deviceId, trackId: track.trackId));
+    _client?.syncNow();
+    await _loadCurrentTrack(preBufferAt: _hostPositionAt(DateTime.now()) ?? position);
+    if (hostIsPlaying && !track.isLive && loadProblem == null && currentTrack == track) {
+      final startAt = DateTime.now().add(_scheduleLeadTime);
+      await _scheduleStart(startAt, _hostPositionAt(startAt) ?? position);
+    }
+  }
+
   Future<void> _performLoad(TrackInfo track, {required Duration preBufferAt}) async {
+    _setLoadProblem(null);
     final resolver = trackResolver;
     if (resolver != null) {
       final Uri? uri;
@@ -562,6 +592,7 @@ class ListenerSessionController extends ChangeNotifier
         uri = await resolver(track);
       } catch (e, st) {
         reportError(e, st, context: 'resolveTrack');
+        if (currentTrack?.trackId == track.trackId) _setLoadProblem(friendlyError(e));
         return;
       }
       // A newer track may have been announced while this one was arriving.
@@ -606,6 +637,9 @@ class ListenerSessionController extends ChangeNotifier
       // A failed load (host HTTP hiccup, engine teardown, ...) must never take
       // the listener down with an unhandled async error.
       reportError(e, st, context: 'loadCurrentTrack');
+      if (currentTrack?.trackId == track.trackId) {
+        _setLoadProblem('This device couldn’t play that song. Try again.');
+      }
     }
   }
 

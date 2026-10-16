@@ -8,6 +8,7 @@ import '../../core/observability/diagnostics.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/platform/session_keep_alive.dart';
 import '../../utils/join_code.dart';
+import '../../utils/friendly_error.dart';
 import 'session_resume_store.dart';
 import 'sync_math.dart';
 import 'web_host_controller.dart';
@@ -180,7 +181,7 @@ class WebHostViewModel extends ChangeNotifier {
     } on SignalingException catch (e) {
       hostController.errorMessage = 'Couldn’t start the session: ${e.message}';
     } catch (e, st) {
-      hostController.errorMessage = 'Couldn’t start the session: $e';
+      hostController.errorMessage = 'Couldn’t start the session. ${friendlyError(e)}';
       reportError(e, st, context: 'webHost.startSession');
     } finally {
       isStarting = false;
@@ -223,7 +224,7 @@ class WebHostViewModel extends ChangeNotifier {
       }
       await hostController.loadTrack(bytes, picked.name);
     } catch (e, st) {
-      hostController.errorMessage = 'Failed to load track: $e';
+      hostController.errorMessage = 'Couldn’t load that song. ${friendlyError(e)}';
       reportError(e, st, context: 'webHost.pickTrack');
     } finally {
       isPickingFile = false;
