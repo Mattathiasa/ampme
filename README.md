@@ -262,7 +262,22 @@ flutter build apk --release --dart-define=SENTRY_DSN=https://<key>@o<org>.ingest
 
 Without `SENTRY_DSN` the app runs exactly as before — errors are still logged
 locally, they're just not sent anywhere. Optionally set
-`SENTRY_ENVIRONMENT` too.
+`SENTRY_ENVIRONMENT` too. CI builds pass the repository secret `SENTRY_DSN`
+(add it under Settings → Secrets and variables → Actions) to the web app, the
+APKs and the app bundle; if it is missing they are built with reporting off.
+
+What is sent is an error report with no user and no screenshot, scrubbed of
+session codes and IP addresses first (`lib/core/observability/scrub.dart`,
+`sentry_scrub.dart`). Nothing else leaves the device.
+
+### Diagnostics
+
+**Copy diagnostics** (listener screen, web host screen) puts on the clipboard
+the app version, what the app knows about the session, the recent errors and
+the last ~4 minutes of per-second sync readings (drift, clock offset, round
+trip, what the sync loop did) — the same lines `AMPME_SYNC_LOG` prints, which
+no longer needs a cable and `adb logcat` to read. Session codes and IP
+addresses are removed. Nothing is sent anywhere unless the person pastes it.
 
 ### Signing a release build
 

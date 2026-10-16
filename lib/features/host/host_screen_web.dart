@@ -8,6 +8,7 @@ import '../../theme/amp_tokens.dart';
 import '../../ui/amp_button.dart';
 import '../../ui/amp_page_route.dart';
 import '../../ui/amp_scaffold.dart';
+import '../../ui/copy_diagnostics_button.dart';
 import '../../ui/device_tile.dart';
 import '../../ui/eq_visualizer.dart';
 import '../../ui/glass_card.dart';
@@ -399,6 +400,8 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         ),
         const SizedBox(height: 16),
       ],
+      CopyDiagnosticsButton(report: viewModel.diagnosticsReport),
+      const SizedBox(height: 8),
     ];
 
     final end = AmpButton(

@@ -7,8 +7,3 @@
 # serialized/reflected in release builds.
 -keepattributes LineNumberTable,SourceFile
 -keep class io.sentry.** { *; }
-
-# --- audio_service / just_audio_background ---
-# The foreground service and media button receiver are referenced from the
-# manifest and invoked via reflection by audio_service.
--keep class com.ryanheise.audioservice.** { *; }

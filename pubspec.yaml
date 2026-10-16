@@ -31,9 +31,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   just_audio: ^0.10.6
   # Windows playback (WinRT MediaPlayer). Native plugin — auto-registers via
   # windows/flutter/generated_plugin_registrant.cc, no Dart wiring needed.
@@ -67,6 +64,8 @@ dependencies:
   realtime_client: ^2.13.0
   video_player: ^2.14.1
   shared_preferences: ^2.5.6
+  # The app version, for the diagnostics report people can copy and send.
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:
@@ -84,7 +83,6 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  mocktail: ^1.0.5
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import '../../core/network/signaling/cloud_signaling_channel.dart';
 import '../../core/network/signaling/relay_signaling_channel.dart';
 import '../../core/network/signaling/signaling_channel.dart';
+import '../../core/observability/diagnostics.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/platform/session_keep_alive.dart';
 import '../../utils/join_code.dart';
@@ -83,6 +84,28 @@ class WebHostViewModel extends ChangeNotifier {
         playing: info.playing,
       );
     }
+  }
+
+  /// The text behind "Copy diagnostics": the session and each device's state
+  /// as the host sees it, then recent errors.
+  Future<String> diagnosticsReport() {
+    final c = hostController;
+    final b = <String, String>{
+      'platform': 'web',
+      'role': 'host (browser)',
+      'session': c.sessionName.isEmpty ? '-' : c.sessionName,
+      'song': c.currentTrack == null ? '-' : c.playbackState.name,
+      'speaker output': c.speakerRoute.label,
+      'speaker offset ms': '${c.speakerOffsetMs}',
+      'signaling': c.signalingLost ? 'lost' : 'ok',
+      'devices': '${c.listenerCount}',
+    };
+    var i = 0;
+    for (final l in c.listeners) {
+      b['device ${++i}'] =
+          '${l.name} · ${l.phase.name} · drift ${l.driftMs ?? '-'} ms · rtt ${l.roundTripMs ?? '-'} ms';
+    }
+    return Diagnostics.report(state: b);
   }
 
   /// Forgets the saved session (listeners still waiting give up on their own).

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../audio/audio_engine.dart';
 import '../audio/just_audio_engine.dart';
+import '../observability/diagnostics.dart';
 import '../observability/reporting.dart';
 import '../network/control_client.dart';
 import '../network/control_link.dart';
@@ -820,9 +821,24 @@ class ListenerSessionController extends ChangeNotifier
     final drift = estimate - target;
     _learnStartLead(drift, DateTime.now());
     void trace(String action) {
+      final rtt = _client?.clockEstimate?.roundTripMs;
+      // Always kept (bounded) for "Copy diagnostics"; printed per second only
+      // in builds made for that (the emulator test reads logcat).
+      Diagnostics.sync((
+        at: DateTime.now(),
+        drift: drift,
+        target: target,
+        estimate: estimate,
+        offset: offsetMs,
+        rtt: rtt,
+        seekLead: seekLeadMs,
+        startLead: startLeadMs,
+        nudge: syncNudgeMs,
+        action: action,
+      ));
       if (!_syncLog) return;
       debugPrint('[sync] drift=$drift target=$target est=$estimate '
-          'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
+          'offset=$offsetMs rtt=$rtt '
           'lead=$seekLeadMs start=$startLeadMs nudge=$syncNudgeMs $action');
     }
     // The host re-broadcasts a measured reference every second. Start

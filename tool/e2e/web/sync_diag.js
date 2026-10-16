@@ -97,6 +97,14 @@ const {
     log('HOST-REPORTED', JSON.stringify(t.match(/(In sync|Catching up) \([-+]?\d+ ms\)/g)));
     await host.waitForTimeout(1000);
   }
+  // "Copy diagnostics" on the host: a report with the devices, no session code.
+  await host.getByRole('button', { name: 'Copy diagnostics' }).click({ force: true });
+  await host.waitForTimeout(400);
+  const diagnostics = await host.evaluate(() => navigator.clipboard.readText());
+  log('DIAGNOSTICS', diagnostics.split('\n').slice(0, 14).join(' | '));
+  const diagnosticsOk = /Ampme diagnostics/.test(diagnostics) && /device 1:/.test(diagnostics) &&
+    /sync readings/.test(diagnostics) && !/AMP-[A-Z0-9]{6}/.test(diagnostics);
+  log('diagnostics report ok:', diagnosticsOk);
   for (const [n, arr] of Object.entries(globalThis.__sync)) log('LISTENER', n, '\n  ' + arr.slice(-8).join('\n  '));
   if (process.env.SONG && /\.(webm|mp4)$/.test(process.env.SONG)) {
     const v = await samplePhases([['host', host, 'host'], ['video', host, 'video']]);
@@ -142,7 +150,7 @@ const {
   const au = result.audible;
   const videoOk = !(process.env.SONG && /\.(webm|mp4)$/.test(process.env.SONG)) ||
     (globalThis.__received && globalThis.__received.magic === 'OggS');
-  const ok = videoOk && au.l1 != null && au.l2 != null && Math.abs(au.l1) <= 60 && Math.abs(au.l2) <= 60 && Math.abs(au.l1 - au.l2) <= 40 && pausedOk &&
+  const ok = videoOk && diagnosticsOk && au.l1 != null && au.l2 != null && Math.abs(au.l1) <= 60 && Math.abs(au.l2) <= 60 && Math.abs(au.l1 - au.l2) <= 40 && pausedOk &&
     result.resumed.l1 != null && result.resumed.l2 != null && Math.abs(result.resumed.l1 - result.resumed.l2) <= 40;
   const relevant = errors.filter((e) => !/favicon|stun|ICE|Failed to load resource/i.test(e));
   if (relevant.length) log('errors', relevant.slice(0, 8));

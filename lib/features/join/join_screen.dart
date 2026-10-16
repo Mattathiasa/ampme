@@ -11,6 +11,7 @@ import '../../ui/amp_button.dart';
 import '../../ui/amp_page_route.dart';
 import '../../ui/amp_scaffold.dart';
 import '../../ui/code_field.dart';
+import '../../ui/copy_diagnostics_button.dart';
 import '../../ui/eq_visualizer.dart';
 import '../../ui/glass_card.dart';
 import '../../ui/live_pill.dart';
@@ -415,7 +416,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
             outputLabel: viewModel.outputRoute?.label,
           ),
         ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 8),
+        CopyDiagnosticsButton(report: viewModel.diagnosticsReport),
+        const SizedBox(height: 16),
         AmpButton(
           label: 'Leave session',
           icon: Icons.logout_rounded,

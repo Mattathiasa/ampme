@@ -9,6 +9,7 @@ import '../../core/network/network_utils.dart';
 import '../../core/network/signaling/cloud_signaling_channel.dart';
 import '../../core/network/signaling/relay_signaling_channel.dart';
 import '../../core/network/signaling/signaling_channel.dart';
+import '../../core/observability/diagnostics.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
@@ -227,6 +228,35 @@ class JoinViewModel extends ChangeNotifier {
   void dismissCalibrationHint() {
     suggestCalibration = false;
     notifyListeners();
+  }
+
+  /// The text behind "Copy diagnostics": what this device knows about the
+  /// session, then recent errors and sync readings.
+  Future<String> diagnosticsReport() {
+    final s = session;
+    return Diagnostics.report(state: {
+      'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+      'role': s == null
+          ? 'not in a session'
+          : s is WebRtcListenerController
+              ? 'listener, browser-hosted session'
+              : 'listener, phone-hosted session',
+      if (s != null) ...{
+        'session': s.sessionName ?? '-',
+        'connection': s.hostLeft
+            ? 'host left'
+            : s.isReconnecting
+                ? 'reconnecting'
+                : s.connectProblem
+                    ? 'cannot reach the host directly'
+                    : 'connected',
+        'playback': s.playbackState.name,
+        'sync nudge ms': '${s.syncNudgeMs}',
+        'clock offset ms': '${s.clockOffsetMs ?? '-'}',
+        'round trip ms': '${s.roundTripMs ?? '-'}',
+      },
+      'output': outputRoute?.label ?? '-',
+    });
   }
 
   /// Where this device's sound comes out; its saved timing is in use.

@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+import 'diagnostics.dart';
+
 /// Reports an error to Sentry when a `SENTRY_DSN` was provided at build time,
 /// and always logs it locally (with a short [context] describing what was
 /// happening) so debug builds still surface it.
@@ -10,6 +12,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 void reportError(Object error, StackTrace? stack, {String? context}) {
   final prefix = context == null ? '' : '$context: ';
   debugPrint('$prefix$error\n$stack');
+  Diagnostics.error(context ?? 'error', error);
   if (!Sentry.isEnabled) return;
   Sentry.captureException(error, stackTrace: stack);
 }

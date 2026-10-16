@@ -48,6 +48,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Crash reporting in the builds people install (empty = off). The e2e
+      # APK below is built without it.
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -64,7 +68,7 @@ jobs:
       - run: flutter analyze
       - run: flutter test -j 1
       - name: Build the web app
-        run: flutter build web --release --no-web-resources-cdn
+        run: flutter build web --release --no-web-resources-cdn --dart-define=SENTRY_DSN="$SENTRY_DSN"
       - uses: actions/upload-artifact@v4
         with:
           name: web
@@ -99,15 +103,16 @@ jobs:
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk apks/ampme-x86_64-e2e.apk
       - name: Build the release APKs
         run: |
-          flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
+          flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN"
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apks/ampme-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk apks/ampme-armeabi-v7a.apk
-          flutter build apk --release
+          flutter build apk --release --dart-define=SENTRY_DSN="$SENTRY_DSN"
           cp build/app/outputs/flutter-apk/app-release.apk apks/ampme.apk
           echo "${SIGNING:-debug}" > apks/SIGNING
           ls -la apks
       # What the Play Store takes; kept as a build artifact until a listing exists.
-      - run: flutter build appbundle --release
+      - run: flutter build appbundle --release --dart-define=SENTRY_DSN="$SENTRY_DSN"
       - uses: actions/upload-artifact@v4
         with:
           name: aab
