@@ -463,7 +463,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
               : track.isLive || track.isLiveCapture
               ? _LiveListenerView(volume: session.volume, onVolumeChanged: viewModel.setVolume)
               : TransportControls(
-                  title: track.fileName,
+                  title: track.displayTitle,
+                  artist: track.artist,
+                  artwork: track.artwork,
                   playbackState: session.playbackState,
                   position: session.position,
                   duration: Duration(milliseconds: track.durationMs),

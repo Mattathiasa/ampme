@@ -17,6 +17,7 @@ import '../../core/session/listener_session_controller.dart';
 import '../../core/session/device_name_store.dart';
 import '../../core/session/sync_nudge_store.dart';
 import '../../core/platform/audio_route.dart';
+import '../../core/platform/media_session.dart';
 import '../../core/platform/session_keep_alive.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/session/web_rtc_listener_controller.dart';
@@ -399,6 +400,7 @@ class JoinViewModel extends ChangeNotifier {
     routeNotice = null;
     session?.dispose();
     session = null;
+    showNowPlaying(null);
     notifyListeners();
   }
 
@@ -422,6 +424,8 @@ class JoinViewModel extends ChangeNotifier {
   void _sessionChanged() {
     // The host ended it: nothing left to keep alive.
     if (session?.hostLeft ?? false) unawaited(SessionKeepAlive.stop());
+    final current = session;
+    showNowPlaying(current == null || current.hostLeft ? null : current.currentTrack);
     notifyListeners();
   }
 

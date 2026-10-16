@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,8 @@ import '../audio/audio_session_manager.dart';
 import '../audio/just_audio_engine.dart';
 import '../audio/live_mic_broadcaster.dart';
 import '../audio/system_audio_capture.dart';
+import '../media/artwork.dart';
+import '../media/tags.dart';
 import '../observability/reporting.dart';
 import '../network/audio_http_server.dart';
 import '../network/control_server.dart';
@@ -48,6 +51,9 @@ const Duration _readyAckTimeout = Duration(milliseconds: 1500);  /// Deviation (
   /// previous command can never satisfy the current one.
   final Set<String> _readyAcks = {};
   bool _awaitingReadyAcks = false;
+
+/// How much of the start of a song file is read for its tags and cover.
+const int _tagReadBytes = 6 * 1024 * 1024;
 
 /// Orchestrates a hosted session: owns the audio engine (what the host
 /// itself hears), the local HTTP server (audio streaming + control
@@ -193,18 +199,38 @@ class HostSessionController extends ChangeNotifier {
     final ip = localIp ?? await getLocalWifiIp();
     final streamUrl = 'http://$ip:${_httpServer.port}/stream/$trackId';
     this.videoPath = videoPath;
+    final tags = await _readTagsOf(File(videoPath ?? file.path));
+    final cover = tags.artwork;
     currentTrack = TrackInfo(
       trackId: trackId,
       fileName: fileName,
       streamUrl: streamUrl,
       durationMs: duration?.inMilliseconds ?? 0,
       hasVideo: videoPath != null,
+      title: tags.title,
+      artist: tags.artist,
+      artwork: cover == null ? null : await shrinkArtwork(cover),
     );
 
     _controlServer.broadcast(
       ControlMessage.trackChanged(senderId: hostDevice.deviceId, track: currentTrack!),
     );
     notifyListeners();
+  }
+
+  /// The tags at the start of [file] (where MP3 and FLAC keep them, and
+  /// where most M4A files keep theirs). Reading is best effort: a song
+  /// without readable tags is shown by its file name.
+  static Future<TrackTags> _readTagsOf(File file) async {
+    try {
+      final head = BytesBuilder(copy: false);
+      await for (final chunk in file.openRead(0, _tagReadBytes)) {
+        head.add(chunk);
+      }
+      return readTags(head.takeBytes());
+    } catch (_) {
+      return const TrackTags();
+    }
   }
 
   Future<void> play() async {

@@ -302,7 +302,9 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
         GlassCard(
           accent: controller.playbackState == PlaybackState.playing ? tokens.volt : null,
           child: TransportControls(
-            title: track.fileName,
+            title: track.displayTitle,
+            artist: track.artist,
+            artwork: track.artwork,
             playbackState: controller.playbackState,
             position: controller.position,
             duration: Duration(milliseconds: track.durationMs),
@@ -322,7 +324,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
       const SectionLabel('Source'),
       SourceTile(
         icon: track?.hasVideo ?? false ? Icons.movie_rounded : Icons.library_music_rounded,
-        title: track == null || track.isLiveCapture ? 'Choose a song or video' : track.fileName,
+        title: track == null || track.isLiveCapture ? 'Choose a song or video' : track.displayTitle,
         subtitle: track == null || track.isLiveCapture
             ? 'MP3, WAV, MP4, WebM… sent to every phone, then started together'
             : 'Tap to pick another',

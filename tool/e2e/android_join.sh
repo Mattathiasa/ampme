@@ -82,7 +82,7 @@ tap "$FIELD"
 adb shell input text "$CODE"
 adb shell input keyevent KEYCODE_BACK # close the keyboard
 tap "$(wait_for '^Join$' 30)"
-wait_for "${TRACK_NAME:-clip\\.webm}" 90 >/dev/null
+wait_for "${TRACK_NAME:-clip}" 90 >/dev/null
 echo "Joined: the app shows the host's song"
 wait_for 'In sync' 120 >/dev/null
 echo "Clock synced with the host"

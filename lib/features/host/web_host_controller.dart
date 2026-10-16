@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 
+import '../../core/media/artwork.dart';
+import '../../core/media/tags.dart';
 import '../../core/network/file_transfer.dart';
 import '../../core/network/models/control_message.dart';
 import '../../core/network/models/playback_state.dart';
@@ -16,6 +18,7 @@ import '../../core/network/webrtc/data_channels.dart';
 import '../../core/network/webrtc/ice_servers.dart';
 import '../../core/observability/reporting.dart';
 import '../../core/platform/audio_route.dart';
+import '../../core/platform/media_session.dart';
 import '../../core/sync/acoustic_calibration.dart';
 import '../../core/sync/chirp_player.dart';
 import '../../utils/id_generator.dart';
@@ -468,14 +471,20 @@ class WebHostController extends ChangeNotifier {
         _fileMime = audioMimeFor(fileName);
         _fileSendName = fileName;
       }
+      final tags = readTags(bytes);
+      final cover = tags.artwork;
       final track = TrackInfo(
         trackId: trackId ?? generateId(),
         fileName: fileName,
         streamUrl: '',
         durationMs: (buffer.duration * 1000).round(),
         hasVideo: hasVideo,
+        title: tags.title,
+        artist: tags.artist,
+        artwork: cover == null ? null : await shrinkArtwork(cover),
       );
       currentTrack = track;
+      showNowPlaying(track);
       position = Duration.zero;
       playbackState = PlaybackState.stopped;
       if (_resumable) {
@@ -1733,6 +1742,7 @@ class WebHostController extends ChangeNotifier {
     _broadcast(ControlMessage.sessionEnded(senderId: _hostId));
     _signaling?.send({'type': 'end'});
     _removePageHideHook();
+    showNowPlaying(null);
     if (isSharingTab) stopTabShare(announce: false);
     _stopSource();
     _stopReferenceTimer();

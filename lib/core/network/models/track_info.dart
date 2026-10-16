@@ -10,6 +10,9 @@ class TrackInfo {
     this.hasVideo = false,
     this.liveEpoch,
     this.liveSampleRate,
+    this.title,
+    this.artist,
+    this.artwork,
   });
 
   final String trackId;
@@ -34,6 +37,28 @@ class TrackInfo {
 
   bool get isLiveCapture => liveEpoch != null && liveSampleRate != null;
 
+  /// What the file calls itself, when its tags say (otherwise null and the
+  /// file name stands in: see [displayTitle]).
+  final String? title;
+  final String? artist;
+
+  /// A small cover picture (JPEG or PNG), base64. A thumbnail: hosts shrink
+  /// the cover so it fits comfortably in a control message.
+  final String? artwork;
+
+  /// The name to show for this song.
+  String get displayTitle => title ?? withoutExtension(fileName);
+
+  /// [fileName] without its extension ("Song.mp3" is shown as "Song").
+  static String withoutExtension(String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    // Only a short, plain extension is dropped ("a.b c" keeps its dot).
+    if (dot > 0 && fileName.length - dot <= 5 && !fileName.substring(dot).contains(' ')) {
+      return fileName.substring(0, dot);
+    }
+    return fileName;
+  }
+
   Map<String, dynamic> toJson() => {
     'trackId': trackId,
     'fileName': fileName,
@@ -43,6 +68,9 @@ class TrackInfo {
     if (hasVideo) 'hasVideo': true,
     'liveEpoch': ?liveEpoch,
     'liveSampleRate': ?liveSampleRate,
+    'title': ?title,
+    'artist': ?artist,
+    'artwork': ?artwork,
   };
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) {
@@ -56,6 +84,9 @@ class TrackInfo {
       hasVideo: json['hasVideo'] as bool? ?? false,
       liveEpoch: json['liveEpoch'] as int?,
       liveSampleRate: json['liveSampleRate'] as int?,
+      title: json['title'] as String?,
+      artist: json['artist'] as String?,
+      artwork: json['artwork'] as String?,
     );
   }
 }

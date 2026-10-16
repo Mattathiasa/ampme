@@ -133,7 +133,7 @@ jobs:
           # A video: the host shows the picture, the APK plays its sound.
           - mode: video
             live: ''
-            track: 'clip\.webm'
+            track: 'clip'
           # A shared browser tab, played live by every device together.
           - mode: live
             live: '1'

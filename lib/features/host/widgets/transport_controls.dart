@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/network/models/playback_state.dart';
 import '../../../theme/amp_tokens.dart';
+import '../../../ui/artwork_view.dart';
 import '../../../ui/eq_visualizer.dart';
 import '../../../ui/pressable.dart';
 import '../../../utils/formatters.dart';
@@ -18,6 +19,8 @@ class TransportControls extends StatelessWidget {
     required this.position,
     required this.duration,
     this.title,
+    this.artist,
+    this.artwork,
     this.onPlay,
     this.onPause,
     this.onSeek,
@@ -30,6 +33,12 @@ class TransportControls extends StatelessWidget {
   final Duration position;
   final Duration duration;
   final String? title;
+
+  /// The artist, shown under the title when the song says.
+  final String? artist;
+
+  /// The cover picture (base64 JPEG/PNG), shown beside the title.
+  final String? artwork;
   final VoidCallback? onPlay;
   final VoidCallback? onPause;
   final ValueChanged<Duration>? onSeek;
@@ -64,6 +73,10 @@ class TransportControls extends StatelessWidget {
         if (title != null)
           Row(
             children: [
+              if (artwork != null) ...[
+                ArtworkView(artwork: artwork!, size: 72),
+                const SizedBox(width: 14),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -81,6 +94,15 @@ class TransportControls extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.headlineSmall,
                     ),
+                    if (artist != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        artist!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(color: tokens.textDim),
+                      ),
+                    ],
                   ],
                 ),
               ),
