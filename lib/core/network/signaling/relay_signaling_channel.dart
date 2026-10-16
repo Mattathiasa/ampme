@@ -38,6 +38,9 @@ class RelaySignalingChannel implements SignalingChannel {
   Completer<Map<String, dynamic>>? _welcome;
   bool _closed = false;
 
+  /// What proves to the relay that this host owns [code] (from its welcome).
+  String? _hostToken;
+
   @override
   Stream<Map<String, dynamic>> get messages => _messages.stream;
 
@@ -66,7 +69,12 @@ class RelaySignalingChannel implements SignalingChannel {
     );
     _sendRaw(
       role == SignalingRole.host
-          ? {'type': 'host', 'code': code, 'sessionName': sessionName}
+          ? {
+              'type': 'host',
+              'code': code,
+              'sessionName': sessionName,
+              if (_hostToken != null) 'hostToken': _hostToken,
+            }
           : {
               'type': 'listener',
               'code': code,
@@ -97,6 +105,7 @@ class RelaySignalingChannel implements SignalingChannel {
     if (welcome != null && !welcome.isCompleted) {
       switch (message['type']) {
         case 'welcome':
+          _hostToken = message['hostToken'] as String?;
           welcome.complete(message);
           return;
         case 'no-host':
@@ -138,6 +147,12 @@ class RelaySignalingChannel implements SignalingChannel {
     } catch (_) {
       // Relay gone; already-connected peers keep streaming directly.
     }
+  }
+
+  @override
+  void forgetListener(String id) {
+    // The relay announces a listener once, when it registers; there is no
+    // re-announcement to answer.
   }
 
   @override

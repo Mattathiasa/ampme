@@ -36,12 +36,17 @@ import 'package:ampme/core/network/network_utils.dart';
 //   relay   -> client{"type":"end"}            (session ended / host gone)
 //   relay   -> client{"type":"error","message":"..."}
 //
-// No authentication, no encryption, LAN-only by design — the same trust
-// model as the rest of Ampme. Bind it to a machine all participants can
-// reach on the LAN.
+// No encryption, LAN-only by design — the same trust model as the rest of
+// Ampme: bind it to a machine all participants can reach on the LAN. What it
+// does guard: a code can only be re-claimed by the host that holds its
+// token, only the host can end a session, a client can only reach its own
+// session, and the relay stamps `from` itself (a listener can't pose as
+// another). Browser pages from other origins can't open the socket.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 /// One static directory served at a URL prefix ('' for root, '/web' for the
 /// web app beneath the landing page). Longest prefix wins on a request.
@@ -53,6 +58,13 @@ class _StaticRoot {
 }
 
 Future<void> main(List<String> args) async {
+  // Whatever slips through must not take every session down with it.
+  await runZonedGuarded(() => _run(args), (error, stack) {
+    print('Relay error (continuing): $error');
+  });
+}
+
+Future<void> _run(List<String> args) async {
   var port = 8080;
   String? serveDir;
   String? docsDir;
@@ -90,7 +102,17 @@ Future<void> main(List<String> args) async {
 
   final relay = SignalingRelay();
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-  server.listen((request) => _handleRequest(request, relay, roots));
+  server.listen((request) async {
+    try {
+      await _handleRequest(request, relay, roots);
+    } catch (_) {
+      // A client that vanished mid-response, a bad upgrade: that request
+      // dies, the relay does not.
+      try {
+        await request.response.close();
+      } catch (_) {}
+    }
+  });
 
   // Reuse the app's adapter-selection logic (physical adapters first, RFC
   // 1918 preferred, virtual adapters skipped) so the printed URLs are
@@ -139,6 +161,11 @@ Future<void> _handleRequest(
 ) async {
   if (WebSocketTransformer.isUpgradeRequest(request) &&
       request.uri.path == '/ws') {
+    if (!isAllowedOrigin(request.headers.value('origin'), request.headers.host)) {
+      request.response.statusCode = HttpStatus.forbidden;
+      await request.response.close();
+      return;
+    }
     final socket = await WebSocketTransformer.upgrade(request);
     relay.handleClient(socket);
     return;
@@ -180,6 +207,11 @@ Future<void> _serveStatic(HttpRequest request, List<_StaticRoot> roots) async {
     return;
   }
 
+  if (path.split('/').contains('..')) {
+    response.statusCode = HttpStatus.forbidden;
+    await response.close();
+    return;
+  }
   var relative = best.prefix.isEmpty
       ? (path == '/' ? 'index.html' : path)
       : (path == best.prefix
@@ -269,6 +301,20 @@ bool isNoCachePath(String path) {
       name == 'manifest.json';
 }
 
+/// Whether a WebSocket upgrade from a page with [origin] may use the relay.
+/// Native apps send no Origin. A browser page may if it was served by this
+/// relay (same host), or runs on this machine (a dev server); a page from
+/// anywhere else could otherwise open sessions on the LAN's behalf.
+bool isAllowedOrigin(String? origin, String? requestHost) {
+  if (origin == null || origin.isEmpty) return true;
+  final host = Uri.tryParse(origin)?.host;
+  if (host == null || host.isEmpty) return false;
+  if (host == 'localhost' || host == '127.0.0.1' || host == '::1' || host == '[::1]') {
+    return true;
+  }
+  return host == requestHost;
+}
+
 /// Routes signaling messages between one host and its listeners.
 ///
 /// No idle sweep: once the WebRTC handshake completes, the audio flows
@@ -278,24 +324,41 @@ bool isNoCachePath(String path) {
 /// connection state.
 class SignalingRelay {
   final _sessions = <String, _Session>{};
+  final _random = Random.secure();
+
+  static const maxSessions = 200;
+  static const maxListenersPerSession = 100;
+  static const maxFrameChars = 64 * 1024;
 
   void handleClient(WebSocket socket) {
     socket.listen(
-      (data) => _handleMessage(socket, data),
+      (data) {
+        try {
+          _handleMessage(socket, data);
+        } catch (_) {
+          // A frame of the wrong shape is dropped; it can't end the relay.
+        }
+      },
       onDone: () => _handleClosed(socket),
       onError: (_) => _handleClosed(socket),
       cancelOnError: false,
     );
   }
 
+  /// [value] as a string of 1..[max] characters, else null.
+  static String? _text(Object? value, {int max = 100}) =>
+      value is String && value.isNotEmpty && value.length <= max ? value : null;
+
   void _handleMessage(WebSocket socket, dynamic data) {
-    if (data is! String) return;
-    final Map<String, dynamic> message;
+    if (data is! String || data.length > maxFrameChars) return;
+    final Object? decoded;
     try {
-      message = jsonDecode(data) as Map<String, dynamic>;
+      decoded = jsonDecode(data);
     } catch (_) {
       return; // drop malformed frames
     }
+    if (decoded is! Map<String, dynamic>) return;
+    final message = decoded;
 
     switch (message['type']) {
       case 'host':
@@ -315,21 +378,35 @@ class SignalingRelay {
   }
 
   void _registerHost(WebSocket socket, Map<String, dynamic> message) {
-    final code = message['code'] as String?;
-    if (code == null || code.isEmpty) {
+    final code = _text(message['code'], max: 64);
+    if (code == null) {
       _send(socket, {'type': 'error', 'message': 'Missing session code.'});
       return;
     }
-    // A new host for a code supersedes any previous one (page reload, retry).
+    final existing = _sessions[code];
+    if (existing != null) {
+      // Only the host that made the session may take it over again (a
+      // retry, a reconnect); anyone else asking for a live code is refused.
+      if (message['hostToken'] != existing.hostToken) {
+        _send(socket, {'type': 'error', 'message': 'That session code is already in use.'});
+        return;
+      }
+    } else if (_sessions.length >= maxSessions) {
+      _send(socket, {'type': 'error', 'message': 'The relay is full.'});
+      return;
+    }
+    final token = existing?.hostToken ?? _newToken();
     _teardown(_sessions.remove(code));
-    final session = _Session()
+    final name = message['sessionName'];
+    final session = _Session(hostToken: token)
       ..host = socket
-      ..sessionName = message['sessionName'] ?? '';
+      ..sessionName = name is String && name.length <= 100 ? name : '';
     _sessions[code] = session;
     _send(socket, {
       'type': 'welcome',
       'code': code,
       'sessionName': session.sessionName,
+      'hostToken': token,
       // The page already knows its own host address; keep the fields for
       // future use / diagnostics.
       'relayIp': '',
@@ -337,12 +414,19 @@ class SignalingRelay {
     });
   }
 
+  String _newToken() => List.generate(24, (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+
   void _registerListener(WebSocket socket, Map<String, dynamic> message) {
-    final code = message['code'] as String?;
-    final id = message['id'] as String?;
+    final code = _text(message['code'], max: 64);
+    final id = _text(message['id']);
     final session = code == null ? null : _sessions[code];
-    if (session == null || session.host == null || id == null || id.isEmpty) {
+    if (session == null || session.host == null || id == null) {
       _send(socket, {'type': 'no-host'});
+      return;
+    }
+    if (session.listeners.length >= maxListenersPerSession &&
+        !session.listeners.containsKey(id)) {
+      _send(socket, {'type': 'error', 'message': 'This session is full.'});
       return;
     }
     if (session.listeners.containsKey(id)) {
@@ -356,34 +440,49 @@ class SignalingRelay {
       'code': code,
       'sessionName': session.sessionName,
     });
+    final name = message['deviceName'];
     _send(session.host!, {
       'type': 'listener-joined',
       'id': id,
-      'deviceName': message['deviceName'] ?? 'Unknown device',
+      'deviceName': name is String && name.isNotEmpty && name.length <= 100 ? name : 'Unknown device',
     });
   }
 
+  /// Forwards a handshake message to its recipient inside the sender's own
+  /// session, stamped with who really sent it.
   void _route(WebSocket socket, Map<String, dynamic> message) {
-    final code = message['code'] as String?;
+    final code = _codeFor(socket);
     final session = code == null ? null : _sessions[code];
-    final to = message['to'] as String?;
+    final to = _text(message['to']);
     if (session == null || to == null) return;
+    final fromHost = session.host == socket;
+    String? senderId;
+    if (!fromHost) {
+      for (final entry in session.listeners.entries) {
+        if (entry.value == socket) senderId = entry.key;
+      }
+      if (senderId == null) return;
+    }
+    // Offers come from the host, answers and stats from listeners.
+    final type = message['type'];
+    if ((type == 'offer' && !fromHost) || ((type == 'answer' || type == 'stats') && fromHost)) {
+      return;
+    }
+    final stamped = jsonEncode({...message, 'from': fromHost ? 'host' : senderId});
     if (to == 'host') {
-      session.host?.add(jsonEncode(message));
+      if (!fromHost) session.host?.add(stamped);
     } else {
-      session.listeners[to]?.add(jsonEncode(message));
+      session.listeners[to]?.add(stamped);
     }
   }
 
   void _endSession(WebSocket socket) {
     final code = _codeFor(socket);
-    final session = code == null ? null : _sessions.remove(code);
-    if (session == null) return;
+    final session = code == null ? null : _sessions[code];
+    if (session == null || session.host != socket) return; // only the host ends it
+    _sessions.remove(code);
     for (final listener in session.listeners.values) {
       _send(listener, {'type': 'end'});
-    }
-    if (session.host != null && session.host != socket) {
-      _send(session.host!, {'type': 'end'});
     }
     _closeQuietly(session.host);
     for (final listener in session.listeners.values) {
@@ -456,6 +555,11 @@ class SignalingRelay {
 }
 
 class _Session {
+  _Session({required this.hostToken});
+
+  /// Proves a later `host` message comes from the host that created the
+  /// session; handed out only in that host's welcome.
+  final String hostToken;
   WebSocket? host;
   final listeners = <String, WebSocket>{};
   String sessionName = '';
