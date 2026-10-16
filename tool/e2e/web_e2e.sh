@@ -8,7 +8,7 @@
 # `npm install --no-save playwright@1.56.1` plus `npx playwright install chromium`).
 #
 # Usage: tool/e2e/web_e2e.sh [--no-build] [scripts...]
-#   scripts: sync resume progressive (default: all)
+#   scripts: sync resume progressive remove (default: all)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -22,7 +22,7 @@ export BASE=${BASE:-http://127.0.0.1:8080/web/}
 
 BUILD=1
 if [ "${1:-}" = "--no-build" ]; then BUILD=0; shift; fi
-SCRIPTS=${*:-sync resume progressive}
+SCRIPTS=${*:-sync resume progressive remove}
 
 if [ "$BUILD" = 1 ]; then
   # Cloud signaling goes to the local stand-in.
@@ -71,6 +71,7 @@ for s in $SCRIPTS; do
       run env MODE=fresh SONG=tone240.wav node "$E2E/web/progressive_e2e.js"
       run env MODE=late SONG=tone240.wav node "$E2E/web/progressive_e2e.js"
       ;;
+    remove) run node "$E2E/web/remove_e2e.js" ;;
     *) echo "unknown script: $s" >&2; exit 2 ;;
   esac
 done

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/network/models/playback_state.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/platform/session_keep_alive.dart';
+import '../../core/session/device_name_store.dart';
 import '../../core/session/sync_nudge_store.dart';
 import '../../utils/platform_info.dart';
 import '../../theme/amp_tokens.dart';
@@ -119,7 +120,9 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
             ),
             const SizedBox(height: 20),
             Text(
-              'The host ended the session',
+              viewModel.session?.removedByHost ?? false
+                  ? 'The host removed this device'
+                  : 'The host ended the session',
               style: Theme.of(context).textTheme.headlineSmall,
               textAlign: TextAlign.center,
             ),
@@ -191,7 +194,12 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
           const SizedBox(height: 14),
           AlertStrip(message: viewModel.errorMessage!),
         ],
-        const SizedBox(height: 28),
+        const SizedBox(height: 8),
+        _DeviceNameRow(
+          name: viewModel.selfDevice.deviceName,
+          onChange: () => _changeName(context, viewModel),
+        ),
+        const SizedBox(height: 20),
         // Shown in caps; the e2e and widget tests look for this exact text.
         Text(
           'Nearby sessions',
@@ -244,6 +252,36 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
     if (code.isEmpty) return;
     FocusScope.of(context).unfocus();
     await viewModel.joinByCode(code);
+  }
+
+  Future<void> _changeName(BuildContext context, JoinViewModel viewModel) async {
+    final controller = TextEditingController(text: viewModel.chosenDeviceName ?? '');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Name this device'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: DeviceNameStore.maxLength,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            hintText: viewModel.selfDevice.deviceName,
+            helperText: 'The host sees this name, for example “Kitchen speaker”.',
+          ),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name != null) await viewModel.setDeviceName(name);
   }
 
   Future<void> _scanQr(BuildContext context, JoinViewModel viewModel) async {
@@ -464,6 +502,30 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
 }
 
 /// Concentric rings that expand outward while scanning for sessions.
+/// "Joining as Kitchen speaker · Change": what the host will call this device.
+class _DeviceNameRow extends StatelessWidget {
+  const _DeviceNameRow({required this.name, required this.onChange});
+
+  final String name;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = AmpTokens.of(context);
+    final style = Theme.of(context).textTheme.bodySmall?.copyWith(color: tokens.textDim);
+    return Row(
+      children: [
+        Icon(Icons.smartphone_rounded, size: 16, color: tokens.textDim),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Joining as $name', style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        TextButton(onPressed: onChange, child: const Text('Change')),
+      ],
+    );
+  }
+}
+
 class _Radar extends StatefulWidget {
   const _Radar({required this.size});
 

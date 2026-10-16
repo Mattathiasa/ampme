@@ -8,9 +8,10 @@ import '../../../utils/formatters.dart';
 
 /// A device connected to this (native) host and how its clock sync is doing.
 class ListenerStatusTile extends StatelessWidget {
-  const ListenerStatusTile({super.key, required this.status});
+  const ListenerStatusTile({super.key, required this.status, this.onRemove});
 
   final ListenerStatus status;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -18,6 +19,7 @@ class ListenerStatusTile extends StatelessWidget {
     final inSync = status.roundTripMs < 200;
     return DeviceTile(
       name: status.deviceName,
+      onRemove: onRemove,
       playing: status.playbackState == PlaybackState.playing,
       status:
           '${formatDuration(Duration(milliseconds: status.positionMs))} · '

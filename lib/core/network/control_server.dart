@@ -25,6 +25,9 @@ class ControlServer {
   final _controller = StreamController<IncomingControlMessage>.broadcast();
   final _disconnectController = StreamController<String>.broadcast();
 
+  /// Devices the host removed: they are told so and refused from then on.
+  final _blocked = <String>{};
+
   Stream<IncomingControlMessage> get incoming => _controller.stream;
 
   /// Emits a listener's deviceId when its socket closes, so callers can
@@ -67,6 +70,12 @@ class ControlServer {
     // the old one — that is how a reconnecting device takes its place back.)
     final bound = _socketDeviceIds[socket];
     if (bound != null && bound != message.senderId) return;
+    if (_blocked.contains(message.senderId)) {
+      // Back after being removed: say so again and hang up.
+      _send(socket, ControlMessage.removed(senderId: _hostId ?? '').encode());
+      unawaited(socket.close(WebSocketStatus.policyViolation, 'Removed'));
+      return;
+    }
     _sockets[message.senderId] = socket;
     _socketDeviceIds[socket] = message.senderId;
     if (_controller.isClosed) return;
@@ -80,6 +89,20 @@ class ControlServer {
     if (deviceId != null && !_disconnectController.isClosed) {
       _disconnectController.add(deviceId);
     }
+  }
+
+  String? _hostId;
+
+  /// Removes [deviceId]: tells it, closes its connection, and refuses it if
+  /// it reconnects. [hostId] is the sender id the removal message carries.
+  void kick(String deviceId, {required String hostId}) {
+    _hostId = hostId;
+    _blocked.add(deviceId);
+    final socket = _sockets[deviceId];
+    if (socket == null) return;
+    _send(socket, ControlMessage.removed(senderId: hostId).encode());
+    // Closing right after the frame is written still delivers it.
+    unawaited(socket.close(WebSocketStatus.policyViolation, 'Removed').catchError((Object _) {}));
   }
 
   void sendTo(String deviceId, ControlMessage message) {

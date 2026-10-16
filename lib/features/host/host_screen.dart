@@ -282,7 +282,11 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
             ),
           )
         else
-          ...controller.listenerStatuses.values.map((status) => ListenerStatusTile(status: status)),
+          ...controller.listenerStatuses.values.map((status) => ListenerStatusTile(
+              status: status,
+              onRemove: () => controller.removeDevice(status.deviceId),
+            ),
+          ),
         const SizedBox(height: 24),
         AmpButton(
           label: 'End session',

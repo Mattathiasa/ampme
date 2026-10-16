@@ -677,6 +677,14 @@ class HostSessionController extends ChangeNotifier {
     );
   }
 
+  /// Takes [deviceId] out of the session; it can't rejoin.
+  void removeDevice(String deviceId) {
+    _controlServer.kick(deviceId, hostId: hostDevice.deviceId);
+    _knownListeners.remove(deviceId);
+    _listenerStatuses.remove(deviceId);
+    notifyListeners();
+  }
+
   void _handleDisconnect(String deviceId) {
     _knownListeners.remove(deviceId);
     _listenerStatuses.remove(deviceId);

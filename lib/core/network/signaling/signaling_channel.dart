@@ -16,7 +16,7 @@
 ///   to host:     welcome, listener-joined{id,deviceName}, listener-left{id},
 ///                answer{from,sdp}, ice{from,candidate,...}
 ///   to listener: welcome{sessionName}, offer{sdp}, ice{...}, no-host, end,
-///                error{message}
+///                removed, error{message}
 ///
 /// [connect] resolves once `welcome` arrives and throws if the session can't
 /// be reached ([SignalingException]).
@@ -38,6 +38,10 @@ abstract class SignalingChannel {
   /// Host side: this listener's connection was dropped; if it announces
   /// itself again, report it as newly joined (so it gets a fresh offer).
   void forgetListener(String id);
+
+  /// Host side: this device was removed from the session. Whatever it sends
+  /// from now on is refused (and, where the transport can, it is told so).
+  void blockListener(String id);
 
   /// Closes the transport. Safe to call more than once.
   Future<void> close();

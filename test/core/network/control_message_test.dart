@@ -120,6 +120,10 @@ void main() {
       );
     });
 
+    test('removed', () {
+      expectRoundTrip(ControlMessage.removed(senderId: 'host'));
+    });
+
     test('clockSyncRequest', () {
       expectRoundTrip(
         ControlMessage.clockSyncRequest(senderId: 'listener-1', clientSendTimeMs: 1700000000500),

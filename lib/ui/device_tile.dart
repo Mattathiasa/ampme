@@ -15,6 +15,7 @@ class DeviceTile extends StatelessWidget {
     this.trailing,
     this.progress,
     this.icon = Icons.smartphone_rounded,
+    this.onRemove,
   });
 
   final String name;
@@ -24,6 +25,9 @@ class DeviceTile extends StatelessWidget {
   final Widget? trailing;
   final double? progress;
   final IconData icon;
+
+  /// When set, the tile gets a menu with "Remove from session".
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +89,18 @@ class DeviceTile extends StatelessWidget {
                 ),
               ),
               if (trailing != null) ...[const SizedBox(width: 10), trailing!],
+              if (onRemove != null)
+                PopupMenuButton<String>(
+                  tooltip: 'Options for $name',
+                  icon: Icon(Icons.more_vert_rounded, color: tokens.textDim),
+                  onSelected: (_) => onRemove!(),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem<String>(
+                      value: 'remove',
+                      child: Text('Remove from session'),
+                    ),
+                  ],
+                ),
             ],
           ),
           if (progress != null) ...[

@@ -33,6 +33,10 @@ abstract class ActiveSession extends ChangeNotifier {
   /// Set once the host ends the session or the connection drops.
   bool get hostLeft;
 
+  /// The host took this device out of the session (so [hostLeft] is true
+  /// too, but the session is still running for everyone else).
+  bool get removedByHost;
+
   /// True while the control connection is being re-established.
   bool get isReconnecting;
 

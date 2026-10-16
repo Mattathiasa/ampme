@@ -231,6 +231,10 @@ class ListenerSessionController extends ChangeNotifier
   @override
   bool hostLeft = false;
 
+  /// Set when the host took this device out of the session; it then stays out.
+  @override
+  bool removedByHost = false;
+
   /// Native-hosted streams play through just_audio, which is started from
   /// the scheduled-start timer; there's no separate unlock step.
   @override
@@ -380,6 +384,11 @@ class ListenerSessionController extends ChangeNotifier
         break;
       case ControlMessageType.sessionEnded:
         _handleHostGone();
+      case ControlMessageType.removed:
+        removedByHost = true;
+        _handleHostGone();
+        // Stop the link too, or it would keep trying to get back in.
+        unawaited(disconnect());
       case ControlMessageType.calibrate:
         // The planned chirp time (none: a host too old to play it), or a
         // phone host's follow-up with when it really sounded.

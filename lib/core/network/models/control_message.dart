@@ -23,6 +23,11 @@ enum ControlMessageType {
   /// Hosts that predate this drop it as an unknown frame.
   calibrate,
 
+  /// Host -> listener: the host took this device out of the session. It must
+  /// not try to come back. Hosts and listeners that predate this drop it as
+  /// an unknown frame.
+  removed,
+
   /// Listener -> host (browser-hosted sessions): the song did not arrive;
   /// send it again. Hosts that predate this drop it as an unknown frame.
   resendSong;
@@ -266,6 +271,16 @@ class ControlMessage {
       type: ControlMessageType.calibrate,
       senderId: senderId,
       payload: {'chirpAtHostTimeMs': ?chirpAtHostTimeMs, if (measured) 'measured': true},
+    );
+  }
+
+  /// The host took the receiving device out of the session (see
+  /// [ControlMessageType.removed]).
+  factory ControlMessage.removed({required String senderId}) {
+    return ControlMessage(
+      type: ControlMessageType.removed,
+      senderId: senderId,
+      payload: const {},
     );
   }
 

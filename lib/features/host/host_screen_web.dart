@@ -384,6 +384,7 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
           (listener) => _ListenerTile(
             listener: listener,
             hostPlaying: controller.playbackState.name == 'playing',
+            onRemove: () => viewModel.removeDevice(listener.id),
           ),
         ),
     ];
@@ -532,10 +533,11 @@ class _LiveShareCard extends StatelessWidget {
 
 /// One connected device and how its sync is going.
 class _ListenerTile extends StatelessWidget {
-  const _ListenerTile({required this.listener, required this.hostPlaying});
+  const _ListenerTile({required this.listener, required this.hostPlaying, required this.onRemove});
 
   final WebListener listener;
   final bool hostPlaying;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -578,6 +580,7 @@ class _ListenerTile extends StatelessWidget {
         hostPlaying;
     return DeviceTile(
       name: listener.name,
+      onRemove: onRemove,
       status: status,
       statusColor: color,
       playing: measuring && drift != null && drift.abs() <= 40,

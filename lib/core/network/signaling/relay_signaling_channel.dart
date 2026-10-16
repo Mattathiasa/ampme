@@ -156,6 +156,12 @@ class RelaySignalingChannel implements SignalingChannel {
   }
 
   @override
+  void blockListener(String id) {
+    // The host controller ignores a blocked id's `listener-joined`; the
+    // removed device was already told over its direct connection.
+  }
+
+  @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;

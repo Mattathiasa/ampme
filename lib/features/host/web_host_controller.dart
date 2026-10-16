@@ -288,6 +288,11 @@ class WebHostController extends ChangeNotifier {
   List<WebListener> get listeners => _listeners.values.toList(growable: false);
   int get listenerCount => _listeners.length;
 
+  /// Devices the host removed; whatever they send is ignored for the rest of
+  /// the session (their id is random per page load, so a reload is a new
+  /// device, but the host sees it appear and can remove it again).
+  final Set<String> _blockedIds = {};
+
   // ---- WebAudio ----
   web.AudioContext? _ctx;
   web.AudioBuffer? _buffer;
@@ -1443,6 +1448,7 @@ class WebHostController extends ChangeNotifier {
       case 'listener-joined':
         final id = message['id'];
         if (id is! String || id.isEmpty || id.length > 100) return;
+        if (_blockedIds.contains(id)) return;
         // Anyone who knows the code can say hello as often, and as many
         // different "devices", as they like; each one costs a peer
         // connection here. Bound both what is joined and what is mid-handshake.
@@ -1637,6 +1643,21 @@ class WebHostController extends ChangeNotifier {
     } catch (e, st) {
       reportError(e, st, context: 'webHost.applyIceCandidate');
     }
+  }
+
+  /// Takes [id] out of the session: tells it, then closes its connection and
+  /// refuses it if it comes back.
+  void removeDevice(String id) {
+    if (!_listeners.containsKey(id)) return;
+    _blockedIds.add(id);
+    _send(id, ControlMessage.removed(senderId: _hostId));
+    _signaling?.blockListener(id);
+    _offerAttempts.remove(id);
+    _listenerFeatures.remove(id);
+    _listeners.remove(id);
+    _notify();
+    // Let the message leave before the connection goes.
+    Timer(const Duration(milliseconds: 400), () => _closePeer(id));
   }
 
   void _dropListener(String id) {

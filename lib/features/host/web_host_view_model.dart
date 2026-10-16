@@ -109,6 +109,9 @@ class WebHostViewModel extends ChangeNotifier {
     return Diagnostics.report(state: b);
   }
 
+  /// Removes a device from the session (it can't rejoin).
+  void removeDevice(String id) => hostController.removeDevice(id);
+
   /// Forgets the saved session (listeners still waiting give up on their own).
   void discardResume() {
     SessionResumeStore.clear();

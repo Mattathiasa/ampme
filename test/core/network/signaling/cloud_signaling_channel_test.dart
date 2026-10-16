@@ -349,4 +349,43 @@ void main() {
     await expectLater(dropped, completes);
     await host.close();
   });
+
+  test('a removed device is refused when it says hello again, and is told so', () async {
+    final hub = _FakeHub();
+    final host = _host(hub);
+    await host.connect();
+    final hostEvents = <Map<String, dynamic>>[];
+    host.messages.listen(hostEvents.add);
+
+    final listener = _listener(hub, 'L1');
+    await listener.connect();
+    final heard = <Map<String, dynamic>>[];
+    listener.messages.listen(heard.add);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(hostEvents.where((m) => m['type'] == 'listener-joined'), hasLength(1));
+
+    host.blockListener('L1');
+    listener.send({'type': 'hello', 'deviceName': 'Phone L1'});
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(hostEvents.where((m) => m['type'] == 'listener-joined'), hasLength(1),
+        reason: 'no new join for a removed device');
+    expect(heard.where((m) => m['type'] == 'removed'), isNotEmpty);
+    await listener.close();
+    await host.close();
+  });
+
+  test('a removed device that tries to join again is told why, not "not found"', () async {
+    final hub = _FakeHub();
+    final host = _host(hub);
+    await host.connect();
+    host.blockListener('L1');
+
+    final listener = _listener(hub, 'L1');
+    await expectLater(
+      listener.connect(),
+      throwsA(isA<SignalingException>().having((e) => e.message, 'message', contains('removed'))),
+    );
+    await host.close();
+  });
 }

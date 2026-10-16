@@ -14,6 +14,7 @@ import '../../core/observability/reporting.dart';
 import '../../core/permissions/app_permissions.dart';
 import '../../core/session/active_session.dart';
 import '../../core/session/listener_session_controller.dart';
+import '../../core/session/device_name_store.dart';
 import '../../core/session/sync_nudge_store.dart';
 import '../../core/platform/audio_route.dart';
 import '../../core/platform/session_keep_alive.dart';
@@ -41,13 +42,39 @@ const _lanFromHttpsMessage =
 /// and plays it.
 class JoinViewModel extends ChangeNotifier {
   JoinViewModel()
-    : selfDevice = DeviceInfo(
-        deviceId: generateId(),
-        deviceName: 'Listener-${generateId().substring(0, 4)}',
-        platform: currentPlatformName(),
-      );
+    : _deviceId = generateId(),
+      _automaticName = 'Listener-${generateId().substring(0, 4)}' {
+    unawaited(_loadDeviceName());
+  }
 
-  final DeviceInfo selfDevice;
+  final String _deviceId;
+  final String _automaticName;
+  String? _chosenName;
+
+  /// This device as the host sees it. Read when joining, so a name set before
+  /// then is the one the host shows.
+  DeviceInfo get selfDevice => DeviceInfo(
+    deviceId: _deviceId,
+    deviceName: _chosenName ?? _automaticName,
+    platform: currentPlatformName(),
+  );
+
+  /// The name set by the user, or null while the automatic one is used.
+  String? get chosenDeviceName => _chosenName;
+
+  Future<void> _loadDeviceName() async {
+    final saved = await DeviceNameStore.load();
+    if (saved == null || _chosenName == saved) return;
+    _chosenName = saved;
+    notifyListeners();
+  }
+
+  /// Sets the name the host shows for this device (blank = automatic name).
+  Future<void> setDeviceName(String name) async {
+    _chosenName = DeviceNameStore.clean(name);
+    notifyListeners();
+    await DeviceNameStore.save(_chosenName);
+  }
   final _scanner = SessionListenerScanner();
 
   List<DiscoveredSession> nearbySessions = const [];

@@ -101,6 +101,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   bool _disposed = false;
   bool _audioUnlocked = true;
   bool _hostGone = false;
+  bool _removed = false;
   String? _signaledName;
 
   /// Fraction (0..1) of the current song received so far; null when idle.
@@ -134,6 +135,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   List<int> get lastCalibrationRuns => _session.lastCalibrationRuns;
   @override
   bool get hostLeft => _hostGone || _session.hostLeft;
+  @override
+  bool get removedByHost => _removed || _session.removedByHost;
   @override
   bool get isReconnecting => _session.isReconnecting;
   @override
@@ -197,6 +200,9 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       case 'ice':
         unawaited(_addIceCandidate(message));
       case 'end':
+        _handleHostGone();
+      case 'removed':
+        _removed = true;
         _handleHostGone();
       default:
         break;
@@ -313,6 +319,11 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   }
 
   void _handleConnectionState(rtc.RTCPeerConnectionState state) {
+    // Taken out by the host: the peer closing is expected, not a drop to wait out.
+    if (_session.removedByHost) {
+      _handleHostGone();
+      return;
+    }
     switch (state) {
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected:
         _peerConnected = true;

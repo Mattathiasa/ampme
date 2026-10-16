@@ -170,6 +170,7 @@ class CloudSignalingChannel implements SignalingChannel {
   final _messages = StreamController<Map<String, dynamic>>.broadcast();
   final _disconnected = StreamController<void>.broadcast();
   final _knownListeners = <String>{};
+  final _blocked = <String>{};
   final _pendingIce = <String, List<Map<String, dynamic>>>{};
   final _iceTimers = <String, Timer>{};
   Completer<Map<String, dynamic>>? _hostFound;
@@ -218,6 +219,9 @@ class CloudSignalingChannel implements SignalingChannel {
         'Session not found. Check the code, and make sure the host still has '
         'the session open.',
       );
+    } on SignalingException {
+      await close();
+      rethrow;
     } finally {
       helloTimer.cancel();
     }
@@ -235,6 +239,12 @@ class CloudSignalingChannel implements SignalingChannel {
       if (from == null || from == hostId) return;
       switch (type) {
         case 'hello':
+          if (_blocked.contains(from)) {
+            // Said so once over the direct connection; say it again for a
+            // device that comes back, so it stops trying.
+            _transport.broadcast({'type': 'removed', 'from': hostId, 'to': from});
+            return;
+          }
           _transport.broadcast({
             'type': 'host-here',
             'from': hostId,
@@ -282,6 +292,14 @@ class CloudSignalingChannel implements SignalingChannel {
         _unbatchIce(message);
       case 'end':
         _emit({'type': 'end'});
+      case 'removed':
+        final found = _hostFound;
+        if (found != null && !found.isCompleted) {
+          found.completeError(
+            const SignalingException('The host removed this device from the session.'),
+          );
+        }
+        _emit({'type': 'removed'});
     }
   }
 
@@ -323,6 +341,12 @@ class CloudSignalingChannel implements SignalingChannel {
 
   @override
   void forgetListener(String id) {
+    _knownListeners.remove(id);
+  }
+
+  @override
+  void blockListener(String id) {
+    _blocked.add(id);
     _knownListeners.remove(id);
   }
 

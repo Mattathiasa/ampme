@@ -499,4 +499,23 @@ void main() {
     expect(engine.loaded, hasLength(1));
     session.dispose();
   });
+
+  test('when the host removes this device it says so, stops, and does not come back', () async {
+    final toListener = StreamController<String>();
+    final engine = _FakeEngine();
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+      audioEngine: engine,
+      trackResolver: (_) async => Uri.parse('blob:x'),
+    );
+    session.attach(_syncedLink(toListener));
+    expect(session.removedByHost, isFalse);
+
+    toListener.add(ControlMessage.removed(senderId: 'host').encode());
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(session.removedByHost, isTrue);
+    expect(session.hostLeft, isTrue, reason: 'the join screen shows its "left" state');
+    session.dispose();
+  });
 }
