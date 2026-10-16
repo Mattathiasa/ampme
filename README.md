@@ -1,7 +1,34 @@
 # Ampme
 
-Play a song on one phone and every other phone connected to the same session
-plays it back in sync — no cables, no cloud, just the local WiFi network.
+Every phone in the room plays the same song at the same instant — one giant
+speaker, no cables. Host from an Android phone or from any browser; join from
+the Android app or a browser with a code, a link or a QR. Songs, videos (the
+host shows the picture, every other device plays its sound) and a shared
+browser tab all play in step.
+
+- **Site and downloads:** <https://mattathiasa.github.io/ampme/> ·
+  [latest release](https://github.com/Mattathiasa/ampme/releases/latest) ·
+  [web app](https://mattathiasa.github.io/ampme/web/)
+- **Free, no account, no analytics.** What does leave a device is listed in the
+  [privacy page](docs/privacy.html).
+- **MIT licensed** — see [LICENSE](LICENSE).
+
+## What it does
+
+- Starts every device on one scheduled instant and keeps correcting drift every
+  second (clock sync, rate trim, seeks only for big jumps); the host sees each
+  device's offset live. A mic calibration measures a Bluetooth speaker's delay.
+- Phones that join a song in progress, or a song that is still arriving, start
+  on its first seconds instead of waiting for the whole file (WAV and MP4 sound).
+- Shows each song's title, artist and cover, on the lock screen too.
+- Devices can name themselves; the host can remove a device, which then can't
+  rejoin.
+- Works over the internet for browser-hosted sessions (a small handshake through
+  Supabase Realtime, then device-to-device) and fully offline on a LAN (Android
+  host, or the LAN relay).
+- Plays on with the screen off (Android foreground service), resumes after the
+  host's page is reloaded, and explains failures in plain words, with a **Copy
+  diagnostics** button for bug reports.
 
 **Look & feel:** volt lime (`#D4FF3A`) on ink (`#0B0B0F`) with a matching
 light mode. Fonts are bundled, not fetched, so the app looks right on a LAN with
@@ -59,19 +86,24 @@ play as a real-time stream (no seeking, no position sync):
 ```
 lib/
   core/
-    audio/      # AudioEngine abstraction + just_audio implementation
-    network/    # discovery, control protocol, clock sync, HTTP audio server
-    permissions/
-    session/    # HostSessionController / ListenerSessionController
+    audio/      # AudioEngine abstraction, just_audio + WebAudio engines,
+                # live sources, growing-file streaming (GrowingFileServer)
+    media/      # song tags (ID3 / MP4 / FLAC) and cover thumbnails
+    network/    # discovery, control protocol, clock sync, HTTP audio server,
+                # file transfer, WebRTC data channels, signaling (cloud + relay)
+    observability/  # diagnostics ring buffer, scrubbing, Sentry hooks
+    platform/   # keep-alive service, wake lock, audio route, media session
+    session/    # Host/Listener session controllers, sync nudge + device name
   features/
-    home/, host/, join/   # screens + view models
+    home/, host/, join/   # screens + view models (web host controller included)
   theme/        # "Electric Club" design tokens (AmpTokens) + Material themes
   ui/           # component kit: AmpButton, GlassCard, EqVisualizer, SyncRing,
                 # JoinCodeDisplay, SourceTile, DeviceTile, AmpPageRoute…
 assets/fonts/   # Space Grotesk, Inter, JetBrains Mono (bundled, OFL)
-test/
-  core/network/  # unit tests for clock sync math, message (de)serialization,
-                 # and HTTP range parsing — the parts with no UI to click
+web/            # index.html, service worker (progressive streaming), bootstrap
+docs/           # landing page, privacy page, published web app (docs/web)
+tool/           # LAN relay, keystore + font scripts, e2e (tool/e2e)
+test/           # unit and widget tests (VM only), fixtures with tagged songs
 ```
 
 ## Getting started
@@ -82,10 +114,12 @@ flutter run            # requires an Android device/emulator on the same WiFi
 ```
 
 Host and listener devices must be on the same WiFi network (or one device's
-hotspot). This is a from-scratch v1: audio sources are local files, the
-microphone, and (on Android 10+) captured device audio; there's no cloud
-fallback if devices are on different networks — see the `AudioEngine`
-abstraction in `lib/core/audio/` if you want to add a streaming source later.
+hotspot) when the Android app hosts. A browser host works across networks when
+the devices can reach each other directly (no TURN relay yet: a phone on mobile
+data may not connect — the host shows a note). Audio sources are local files and
+videos, the microphone, a shared browser tab, and (on Android 10+) captured
+device audio; see the `AudioEngine` abstraction in `lib/core/audio/` to add a
+streaming source.
 
 ### Windows desktop
 
@@ -223,10 +257,13 @@ wait for the whole song instead of starting on the first seconds.
 
 Web-hosting notes:
 
-- The song is copied to each device before it can play (a few seconds for a
-  typical MP3; the host shows each device's progress, then **Ready** and
-  **In sync (±N ms)** while playing). Late joiners get the song and jump in
-  at the right spot.
+- The song is copied to each device. Formats that can be played from the
+  first seconds (WAV, and the MP4 sound sent for videos) start while the rest
+  is still arriving; others (MP3, Ogg, FLAC, WebM) wait for the whole file, a
+  few seconds for a typical song. The host shows each device's progress, then
+  **Ready** and **In sync (±N ms)** while playing. Late joiners get the song
+  and jump in at the right spot. Starting early needs a secure page (HTTPS or
+  localhost).
 - Listeners need v1.2.0 or newer (older apps expected a live audio stream;
   the host flags them with "Needs the latest Ampme app").
 - Each device's speaker/Bluetooth latency isn't visible to the app; if the
@@ -347,8 +384,9 @@ the APKs and the app bundle, and runs two end-to-end checks:
   device on `adb` (`web_host.js` + `android_join.sh`).
 - **Browser:** `tool/e2e/web_e2e.sh` builds the web app against a local
   stand-in for Supabase Realtime and drives a host and listeners in headless
-  Chromium: sync and seek, resume after a host reload, and listeners starting
-  on a song that is still arriving. It needs flutter, dart, ffmpeg and
+  Chromium: sync and seek, resume after a host reload, listeners starting
+  on a song that is still arriving, naming and removing a device, and a song's
+  title, artist and cover. It needs flutter, dart, ffmpeg and
   Playwright (`npm install --no-save playwright` in `tool/e2e`, then
   `npx playwright install chromium`); run it locally the same way.
 
@@ -361,3 +399,10 @@ flutter analyze
 flutter test -j 1   # this sandbox's default test concurrency intermittently
                      # drops test files; -j 1 runs them reliably
 ```
+
+## Licence and privacy
+
+Ampme is released under the [MIT licence](LICENSE). The bundled fonts (Space
+Grotesk, Inter, JetBrains Mono) are under the SIL Open Font License 1.1. What
+the app and the website send, to whom and why, is on the
+[privacy page](docs/privacy.html).

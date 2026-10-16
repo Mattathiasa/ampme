@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ampme — Privacy</title>
+<meta name="description" content="What Ampme collects, what leaves your device, and who can see it.">
+<meta name="theme-color" content="#0B0B0F">
+<link rel="canonical" href="https://mattathiasa.github.io/ampme/privacy.html">
+<style>
+  /* Served from this site (see tool/subset_landing_fonts.sh): the page asks
+     no one else for anything. SIL Open Font License 1.1. */
+  @font-face { font-family: "Space Grotesk"; font-weight: 500; font-display: swap; src: url("fonts/SpaceGrotesk-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Space Grotesk"; font-weight: 700; font-display: swap; src: url("fonts/SpaceGrotesk-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("fonts/Inter-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("fonts/Inter-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("fonts/Inter-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 700; font-display: swap; src: url("fonts/Inter-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: swap; src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
+  :root {
+    --ink: #0B0B0F;
+    --surface: #14141A;
+    --surface-2: #1C1C24;
+    --hairline: #2A2A35;
+    --glass: rgba(255, 255, 255, 0.06);
+    --glass-stroke: rgba(255, 255, 255, 0.12);
+    --text: #F4F4F0;
+    --dim: #9A9AA6;
+    --volt: #D4FF3A;
+    --on-volt: #0B0B0F;
+    --signal: #FF4D2E;
+    --glow: 1;
+    --radius: 28px;
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --body: "Inter", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ink: #F4F3EE;
+      --surface: #FFFFFF;
+      --surface-2: #EDEBE3;
+      --hairline: #DAD8CF;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-stroke: rgba(11, 11, 15, 0.10);
+      --text: #0B0B0F;
+      --dim: #5F5F6B;
+      --volt: #6E8A00;
+      --on-volt: #FFFFFF;
+      --signal: #E5391B;
+      --glow: 0.35;
+      color-scheme: light;
+    }
+  }
+
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ink); color: var(--text); font: 400 17px/1.65 var(--body); }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+  a { color: var(--volt); }
+  .back { display: inline-block; margin-bottom: 28px; text-decoration: none; font-weight: 600; }
+  h1 { font: 700 clamp(34px, 6vw, 52px)/1.05 var(--display); letter-spacing: -0.03em; margin: 0 0 8px; }
+  h2 { font: 700 24px/1.2 var(--display); letter-spacing: -0.02em; margin: 44px 0 10px; }
+  p, li { color: var(--dim); }
+  p b, li b { color: var(--text); }
+  ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  code { font-family: var(--mono); font-size: .9em; padding: 1px 7px; border-radius: 7px; background: var(--glass); border: 1px solid var(--glass-stroke); }
+  .lead { font-size: 19px; color: var(--text); }
+  .updated { color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">← Ampme</a>
+  <h1>Privacy</h1>
+  <p class="updated">Last updated: October 2026</p>
+  <p class="lead">Ampme has no accounts and no analytics, and it doesn’t upload your music. This page says exactly what does leave your device, and why.</p>
+
+  <h2>What stays on your device</h2>
+  <ul>
+    <li><b>Your songs and videos.</b> They are sent from the host straight to the other devices in the session (peer to peer). Ampme has no server that receives or stores them.</li>
+    <li><b>Settings.</b> Your device name, the timing adjustment for each speaker you used, and (in a browser) the last session and song, so a reloaded host page can pick the session back up. They are stored in the app’s or browser’s own storage on your device. Clearing the app’s data or the site’s data removes them.</li>
+    <li><b>The microphone.</b> Used only when you ask: to calibrate speaker timing (a short chirp is played and heard), or to broadcast the room’s sound when you start a live broadcast. Calibration audio is analysed on your device and discarded. A live broadcast is sent to the devices in your session and nowhere else. Nothing is recorded.</li>
+    <li><b>The camera.</b> Used only to scan a join QR code, on your device. No picture is kept or sent.</li>
+  </ul>
+
+  <h2>What goes through the internet</h2>
+  <p>To let devices find each other, a session hosted from the browser app uses two outside services. Sessions hosted from the Android app on the same Wi-Fi use neither.</p>
+  <ul>
+    <li><b>Connection handshake (Supabase Realtime).</b> Devices in a session exchange short messages through a Supabase project run by the Ampme author. A message includes the session code (in the channel name), the device name you chose, and the technical details two devices need to connect (WebRTC session descriptions and ICE candidates, which contain network addresses, including your local and public IP address). It also carries each listener’s timing statistics, and “end” or “removed” notices. Nothing is kept by the app, but the service handles these messages while the session is open. Supabase’s own policies apply to what the service itself logs.</li>
+    <li><b>Address discovery (Google STUN).</b> Your device asks <code>stun.l.google.com</code> what its public address looks like. Google sees your IP address in that request. No other data is sent to it.</li>
+    <li><b>LAN relay (optional).</b> If you host through a relay on your own network instead, the handshake stays on that network.</li>
+  </ul>
+  <p>The audio itself never goes through either service.</p>
+
+  <h2>Who can see what</h2>
+  <ul>
+    <li>Anyone who has the session code can ask to join, and the host can see their device name and remove them. The code is the only protection a session has, so share it only with people you want in the room.</li>
+    <li>Devices in a session learn each other’s network addresses as part of connecting (that is how peer-to-peer connections work). The host also sees each device’s name and its timing offset.</li>
+  </ul>
+
+  <h2>Crash reports</h2>
+  <p>If a build includes crash reporting (Sentry), it sends an error’s technical details when the app fails. Session codes and IP addresses are removed from it first, no account or user details are attached, and screenshots are not taken. Builds without a reporting key send nothing. You can also copy a diagnostics summary yourself (the “Copy diagnostics” button) and choose whether to share it.</p>
+
+  <h2>This website</h2>
+  <p>It is served from GitHub Pages, with fonts hosted on the same site. It sets no cookies and runs no analytics. GitHub, as the host, may log requests under its own policy. Downloads come from GitHub Releases.</p>
+
+  <h2>Permissions the Android app asks for</h2>
+  <ul>
+    <li>Internet, Wi-Fi and network state, and nearby devices: to find and join sessions on your network.</li>
+    <li>Microphone: calibration and live broadcast (and capturing other apps’ audio, which Android handles with the microphone permission).</li>
+    <li>Camera: scanning QR codes.</li>
+    <li>Notifications, foreground service and wake lock: to keep playing in sync with the screen off, and to show the “Leave” button.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Ampme collects nothing that identifies anyone, children included.</p>
+
+  <h2>Contact and changes</h2>
+  <p>Questions or concerns: open an issue on the <a id="repoLink" href="https://github.com/Mattathiasa/ampme/issues">project’s GitHub page</a>. If this page changes, the date above changes with it, and earlier versions are in the repository history. Ampme is open source under the <a id="licenseLink" href="https://github.com/Mattathiasa/ampme/blob/main/LICENSE">MIT licence</a>, so you can read the code that does everything described here.</p>
+</main>
+</body>
+</html>

@@ -8,12 +8,31 @@
 <meta property="og:title" content="Ampme — One room. One beat.">
 <meta property="og:description" content="Every phone in the room plays the same song at the same instant. Songs, videos, YouTube tabs. Free for Android and the web.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://mattathiasa.github.io/ampme/">
+<meta property="og:image" content="https://mattathiasa.github.io/ampme/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Ampme: three phones playing the same song in sync, with the words One room. One beat.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Ampme — One room. One beat.">
+<meta name="twitter:description" content="Every phone in the room plays the same song at the same instant. Free for Android and the web.">
+<meta name="twitter:image" content="https://mattathiasa.github.io/ampme/og.png">
+<link rel="canonical" href="https://mattathiasa.github.io/ampme/">
 <meta name="theme-color" content="#0B0B0F">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='19' fill='%23D4FF3A'/%3E%3Cg fill='%230B0B0F'%3E%3Crect x='15' y='25.5' width='5' height='13' rx='2.5'/%3E%3Crect x='23' y='19.5' width='5' height='25' rx='2.5'/%3E%3Crect x='31' y='16' width='5' height='32' rx='2.5'/%3E%3Crect x='39' y='22' width='5' height='20' rx='2.5'/%3E%3Crect x='47' y='26.5' width='5' height='11' rx='2.5'/%3E%3C/g%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="preload" href="fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  /* Served from this site (see tool/subset_landing_fonts.sh): the page asks
+     no one else for anything. SIL Open Font License 1.1. */
+  @font-face { font-family: "Space Grotesk"; font-weight: 500; font-display: swap; src: url("fonts/SpaceGrotesk-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Space Grotesk"; font-weight: 700; font-display: swap; src: url("fonts/SpaceGrotesk-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("fonts/Inter-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("fonts/Inter-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("fonts/Inter-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 700; font-display: swap; src: url("fonts/Inter-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: swap; src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
   :root {
     --ink: #0B0B0F;
     --surface: #14141A;
@@ -309,7 +328,7 @@
             Open the web app
           </a>
         </div>
-        <p class="meta"><b>Free</b> · <b>No account</b> · <b>Open source</b> · join with a code, link or QR</p>
+        <p class="meta"><b>Free</b> · <b>No account</b> · <b>Open source (MIT)</b> · join with a code, link or QR</p>
       </div>
 
       <div aria-hidden="true">
@@ -354,8 +373,8 @@
 
 <div class="marquee" aria-hidden="true">
   <div class="row">
-    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>±20 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
-    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>±20 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
+    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>UNDER 50 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
+    <span>SONGS</span><span>VIDEOS</span><span>YOUTUBE TABS</span><span>UNDER 50 MS</span><span>NO ACCOUNT</span><span>ANDROID + WEB</span><span>QR · CODE · LINK</span><span>DEVICE AUDIO</span>
   </div>
 </div>
 
@@ -407,8 +426,8 @@
       </div>
       <div class="glass feat reveal">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
-        <h3>Millisecond sync</h3>
-        <p>A scheduled start plus continuous drift correction. The host sees every speaker’s offset live.</p>
+        <h3>Tight sync</h3>
+        <p>A scheduled start plus continuous drift correction, and a mic calibration for Bluetooth speakers. The host sees every speaker’s offset live.</p>
       </div>
       <div class="glass feat reveal">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 7v6"/><path d="M14 9v4"/></svg></div>
@@ -418,14 +437,14 @@
       <div class="glass feat reveal">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M20 20h.01M17 20h.01"/></svg></div>
         <h3>Code, link or QR</h3>
-        <p>Join from the app or any browser in seconds. No accounts, no sign-up, no tracking.</p>
+        <p>Join from the app or any browser in seconds. No accounts, no sign-up, no tracking — see the <a href="privacy.html">privacy page</a>.</p>
       </div>
     </div>
     <div class="stats">
-      <div class="glass stat reveal"><div class="num">±20<small style="font-size:.45em"> ms</small></div><div class="lbl">typical drift between devices</div></div>
+      <div class="glass stat reveal"><div class="num">&lt;50<small style="font-size:.45em"> ms</small></div><div class="lbl">drift between devices in our browser tests</div></div>
       <div class="glass stat reveal"><div class="num">0</div><div class="lbl">accounts or sign-ups</div></div>
       <div class="glass stat reveal"><div class="num">3</div><div class="lbl">ways to join: code, link, QR</div></div>
-      <div class="glass stat reveal"><div class="num">∞</div><div class="lbl">speakers, one beat</div></div>
+      <div class="glass stat reveal"><div class="num">40</div><div class="lbl">devices in one browser-hosted session</div></div>
     </div>
   </div>
 </section>
@@ -453,7 +472,7 @@
 
       <div class="reqs">
         <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Android 10+ recommended</span>
-        <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Free forever</span>
+        <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Free</span>
         <span class="req"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg> Open source</span>
       </div>
     </div>
@@ -494,7 +513,7 @@
       </details>
       <details class="reveal">
         <summary>Does it work over the internet?</summary>
-        <p>Sessions hosted from the <a href="web/">web app</a> connect through a light internet handshake, so people can join from anywhere; the audio itself still streams device-to-device. Sessions hosted from the Android app run on the local network (same WiFi or a phone hotspot).</p>
+        <p>Sessions hosted from the <a href="web/">web app</a> connect through a light internet handshake, so people can usually join from other networks too; the audio itself still streams device-to-device. Sessions hosted from the Android app run on the local network (same WiFi or a phone hotspot).</p>
       </details>
       <details class="reveal">
         <summary>How do videos work?</summary>
@@ -503,6 +522,18 @@
       <details class="reveal">
         <summary>Can I play YouTube or Spotify?</summary>
         <p>From the web app on a computer (Chrome or Edge), share the tab and every device plays it, about a second behind the tab. On Android 10+, “Broadcast device audio” streams other apps — though some apps (Spotify among them) block capture, and DRM streams are always excluded.</p>
+      </details>
+      <details class="reveal">
+        <summary>Why won’t one of my devices connect?</summary>
+        <p>Devices connect directly to each other, with no relay in between. Most home and office networks allow that, but a device on mobile data or a guest Wi-Fi often can’t reach one on another network. The host sees a note saying so; put the device on the host’s Wi-Fi.</p>
+      </details>
+      <details class="reveal">
+        <summary>Can I remove someone from my session?</summary>
+        <p>Yes. Open the menu on their device in the host’s list and choose “Remove from session”. They’re told, and can’t rejoin. Devices can also set their own name before joining.</p>
+      </details>
+      <details class="reveal">
+        <summary>What does Ampme collect?</summary>
+        <p>No account and no analytics. Songs go straight from the host to the listeners and aren’t uploaded anywhere. The details, including what the connection handshake and crash reports contain, are on the <a href="privacy.html">privacy page</a>.</p>
       </details>
       <details class="reveal">
         <summary>Why isn’t it on the Play Store?</summary>
@@ -518,7 +549,9 @@
       <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="19" fill="#D4FF3A"/><g fill="#0B0B0F"><rect x="15" y="25.5" width="5" height="13" rx="2.5"/><rect x="23" y="19.5" width="5" height="25" rx="2.5"/><rect x="31" y="16" width="5" height="32" rx="2.5"/><rect x="39" y="22" width="5" height="20" rx="2.5"/><rect x="47" y="26.5" width="5" height="11" rx="2.5"/></g></svg>
       AMPME
     </a>
-    <span>Open source · built with Flutter · <span id="year"></span></span>
+    <span>MIT licensed · built with Flutter · <span id="year"></span></span>
+    <a href="privacy.html">Privacy</a>
+    <a href="#" id="licenseLink">Licence</a>
     <a href="#" id="githubLink">Source on GitHub ↗</a>
   </div>
 </footer>
@@ -563,6 +596,7 @@ if (location.hostname.endsWith("github.io")) {
 } else {
   githubLink.href = REPO;
 }
+document.getElementById("licenseLink").href = `${githubLink.href}/blob/main/LICENSE`;
 document.getElementById("year").textContent = new Date().getFullYear();
 
 // Reveal on scroll.
