@@ -6,10 +6,6 @@ import '../../utils/platform_info.dart';
 
 /// Requests the runtime permissions Ampme needs before hosting or joining
 /// a session:
-/// - audio file access, so the host can pick a local song
-///   (`READ_MEDIA_AUDIO` on Android 13+, `READ_EXTERNAL_STORAGE` below it
-///   — `permission_handler`'s `Permission.audio` maps to the right one per
-///   OS version automatically)
 /// - local network access, so discovery/streaming/control sockets work
 ///   (`NEARBY_WIFI_DEVICES` on Android 13+)
 ///
@@ -26,24 +22,6 @@ class AppPermissions {
   /// permission_handler call also avoids the MissingPluginException its
   /// Windows/Linux implementations throw for unsupported permission types.
   static bool get _isDesktopOrWeb => isDesktopPlatform() || kIsWeb;
-
-  static Future<bool> requestAudioLibraryAccess({BuildContext? context}) async {
-    if (_isDesktopOrWeb) return true;
-    var status = await Permission.audio.request();
-    if (status.isPermanentlyDenied && context != null) {
-      if (!context.mounted) return false;
-      final opened = await _showPermissionSettingsDialog(
-        context,
-        title: 'Audio library access is needed',
-        message:
-            'Ampme reads the song from your device so it can stream it to '
-            'everyone in the session. Please allow audio access in Settings.',
-      );
-      if (!opened) return false;
-      status = await Permission.audio.status;
-    }
-    return status.isGranted;
-  }
 
   static Future<bool> requestLocalNetworkAccess() async {
     if (_isDesktopOrWeb) return true;

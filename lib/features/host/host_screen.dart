@@ -47,17 +47,38 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
     final controller = viewModel.hostController;
     final started = controller.sessionName.isNotEmpty;
 
-    return AmpScaffold(
-      title: started ? '' : 'Host a Session',
-      body: AnimatedSwitcher(
-        duration: AmpTokens.slow,
-        switchInCurve: AmpTokens.ease,
-        child: !started
-            ? KeyedSubtree(key: const ValueKey('setup'), child: _buildSetup(context, viewModel))
-            : KeyedSubtree(key: const ValueKey('live'), child: _buildSession(context, viewModel)),
+    // Leave on the notification asked to end the session: close the screen
+    // (which tells every listener).
+    if (viewModel.ended && !_closing) {
+      _closing = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
+
+    return PopScope(
+      // A running session is not left by one stray Back or swipe.
+      canPop: !started,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (await confirmEndSession(context) && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: AmpScaffold(
+        title: started ? '' : 'Host a Session',
+        body: AnimatedSwitcher(
+          duration: AmpTokens.slow,
+          switchInCurve: AmpTokens.ease,
+          child: !started
+              ? KeyedSubtree(key: const ValueKey('setup'), child: _buildSetup(context, viewModel))
+              : KeyedSubtree(key: const ValueKey('live'), child: _buildSession(context, viewModel)),
+        ),
       ),
     );
   }
+
+  bool _closing = false;
 
   Widget _buildSetup(BuildContext context, HostViewModel viewModel) {
     final theme = Theme.of(context);
@@ -262,9 +283,43 @@ class _HostScreenBodyState extends State<_HostScreenBody> {
           )
         else
           ...controller.listenerStatuses.values.map((status) => ListenerStatusTile(status: status)),
+        const SizedBox(height: 24),
+        AmpButton(
+          label: 'End session',
+          icon: Icons.stop_circle_rounded,
+          kind: AmpButtonKind.danger,
+          onPressed: () async {
+            if (await confirmEndSession(context) && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          },
+        ),
       ],
     );
   }
+}
+
+/// Asks before a running session is ended: everyone listening is
+/// disconnected. True if the host chose to end it.
+Future<bool> confirmEndSession(BuildContext context) async {
+  final end = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('End this session?'),
+      content: const Text('Everyone listening will be disconnected.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Keep going'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('End session'),
+        ),
+      ],
+    ),
+  );
+  return end ?? false;
 }
 
 /// Shown on the host while a live source (mic or device audio) is on, in

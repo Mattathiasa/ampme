@@ -54,17 +54,13 @@ class HostViewModel extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      final hasAudioAccess = await AppPermissions.requestAudioLibraryAccess(
-        context: context,
-      );
+      // No audio-library permission: songs come from the system file picker,
+      // which grants access to the one file chosen; asking for the whole
+      // library blocked hosting a mic or device-audio session.
       await AppPermissions.requestLocalNetworkAccess();
       // Best-effort: lets the system-audio capture notification show on
       // Android 13+. Playback works regardless of the outcome.
       await AppPermissions.requestNotificationAccess();
-      if (!hasAudioAccess) {
-        errorMessage = 'Audio library access is required to pick a song.';
-        return;
-      }
       await hostController.start(sessionName);
       systemAudioSupported = await hostController.isSystemAudioSupported();
       if (_disposed) return; // left while it was starting
@@ -72,6 +68,7 @@ class HostViewModel extends ChangeNotifier {
       unawaited(SessionKeepAlive.start(
         title: 'Ampme · hosting $sessionName',
         text: 'Your session keeps playing with the screen off.',
+        onLeave: () => unawaited(endSession()),
       ));
     } catch (e, st) {
       errorMessage = 'Failed to start session: $e';
@@ -193,6 +190,16 @@ class HostViewModel extends ChangeNotifier {
   Future<void> setVolume(double volume) => hostController.setVolume(volume);
 
   bool _disposed = false;
+
+  /// Set when the host chose to end the session (the button, or Leave on the
+  /// notification): the screen closes, which tells every listener.
+  bool ended = false;
+
+  Future<void> endSession() async {
+    if (ended) return;
+    ended = true;
+    notifyListeners();
+  }
 
   @override
   void notifyListeners() {
