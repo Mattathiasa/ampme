@@ -1,0 +1,20 @@
+# Weekly update pull requests for the things that rot quietly: the GitHub
+# Actions the workflows use (several still run on Node 20), the Dart/Flutter
+# packages, and the Android Gradle dependencies.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+    # Plugin majors (permission_handler, mobile_scanner, ...) need a device
+    # check; they arrive as their own pull requests.
+    open-pull-requests-limit: 5
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly

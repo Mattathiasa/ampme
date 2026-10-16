@@ -209,10 +209,17 @@ Open the printed `http://<lan-ip>:8080/web/`, **Host a Session → Advanced:
 use a LAN relay**, enter the relay address and **Start on LAN relay**.
 Listeners join with `<relay-ip>:8080/AMP-XXXXXX` or the QR code.
 
-**GitHub Pages**: the web build is committed under `docs/web/`. Rebuild with
-`flutter build web --release --no-web-resources-cdn` and copy `build/web/`
-over it (`--no-web-resources-cdn` serves CanvasKit from the build instead of
-Google's CDN, so the LAN-relay copy also loads with no internet).
+**GitHub Pages**: the site serves `docs/web/`. A release (a push whose commit
+message contains `[release-apks]`, see below) builds the web app in CI with
+`flutter build web --release --no-web-resources-cdn` — the flag serves
+CanvasKit from the build instead of Google's CDN, so the LAN-relay copy also
+loads with no internet — and commits the result there after the browser tests
+passed against that same build. To publish by hand, run that command and copy
+`build/web/` over `docs/web/`.
+
+The installable-app and streaming parts need a secure page (HTTPS or
+`localhost`): on the plain-HTTP LAN relay the app still works, but listeners
+wait for the whole song instead of starting on the first seconds.
 
 Web-hosting notes:
 
@@ -259,7 +266,16 @@ locally, they're just not sent anywhere. Optionally set
 
 ### Signing a release build
 
-Export these before building (the keystore itself never lives in the repo):
+**CI:** create the key once, on your machine, with `tool/make_keystore.sh`
+and add the four secrets it prints (`ANDROID_KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) under Settings → Secrets and
+variables → Actions. Back the `.jks` file up: Android only installs an update
+signed with the same key, so losing it means everyone has to uninstall once.
+Without the secrets CI signs with a throwaway debug key and says so in the
+release notes.
+
+**Locally:** export these before building (the keystore itself never lives in
+the repo):
 
 ```sh
 export KEYSTORE_PATH=/path/to/upload-keystore.jks
@@ -306,12 +322,24 @@ and join codes pointing at non-private hosts are rejected.
 
 ## Running tests
 
-CI (`.github/workflows/android.yml`) runs analyze + tests, builds the APKs,
-and runs an end-to-end check on an Android emulator: a session hosted from
-the web app (headless Chrome, real Supabase signaling) is joined from the
-APK, and the stream must play through Android's media audio path. The
-pieces live in `tool/e2e/` and also run locally against any device on
-`adb` (`web_host.js` + `android_join.sh`).
+CI (`.github/workflows/android.yml`) runs analyze + tests, builds the web app,
+the APKs and the app bundle, and runs two end-to-end checks:
+
+- **Android:** a session hosted from the web app built by that run (headless
+  Chrome, real Supabase signaling) is joined from the APK on an emulator, and
+  the stream must play through Android's media audio path, also with the
+  screen off. The pieces live in `tool/e2e/` and also run locally against any
+  device on `adb` (`web_host.js` + `android_join.sh`).
+- **Browser:** `tool/e2e/web_e2e.sh` builds the web app against a local
+  stand-in for Supabase Realtime and drives a host and listeners in headless
+  Chromium: sync and seek, resume after a host reload, and listeners starting
+  on a song that is still arriving. It needs flutter, dart, ffmpeg and
+  Playwright (`npm install --no-save playwright` in `tool/e2e`, then
+  `npx playwright install chromium`); run it locally the same way.
+
+Release builds log nothing per second; the e2e APK is built separately with
+`--dart-define=AMPME_SYNC_LOG=true` so the emulator test can read the sync
+lines from logcat.
 
 ```
 flutter analyze

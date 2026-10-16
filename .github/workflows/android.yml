@@ -1,38 +1,44 @@
-# Builds the Android APKs and proves they work against the web app:
+# Builds the Android APKs and the web app, and proves they work together:
 #
-#   build    analyze + unit tests, then split-per-ABI and universal APKs.
-#   e2e      hosts a session from the web app (docs/web) in headless Chrome
-#            over the real Supabase signaling, then boots an Android emulator,
-#            installs the x86_64 APK, joins the session by code and checks the
-#            stream plays through Android's media audio path.
+#   build    analyze + unit tests, the web app (production build), the split
+#            and universal APKs and the app bundle.
+#   e2e      hosts a session from the web app built by this run in headless
+#            Chrome over the real Supabase signaling, then boots an Android
+#            emulator, installs the x86_64 APK, joins the session by code and
+#            checks the stream plays through Android's media audio path.
+#   web-e2e  the browser-only scenarios (tool/e2e/web_e2e.sh): sync and seek,
+#            resume after a host reload, listeners starting on a song that is
+#            still arriving.
 #   release  only for a push whose commit message contains [release-apks], or
-#            a manual run with the `release` input ticked, and only after
-#            build + e2e pass: commits the arm APKs to release/ and publishes
-#            the GitHub Release v<pubspec version> with all three APKs as the
-#            latest release (the landing page's download buttons serve it).
+#            a manual run with the `release` input ticked, and only after the
+#            jobs above pass: publishes the GitHub Release v<pubspec version>
+#            with all three APKs as the latest release (the landing page's
+#            download buttons serve it), then publishes the web app by
+#            committing the build to docs/web.
 #
 # Release signing: add repository secrets ANDROID_KEYSTORE_BASE64 (the .jks,
-# base64-encoded), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without
-# them the APKs are signed with the runner's throwaway debug key, so each
-# build has a different signature (installs over an older build fail).
+# base64-encoded), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD (create them
+# with tool/make_keystore.sh). Without them the APKs are signed with the
+# runner's throwaway debug key, so each build has a different signature
+# (installs over an older build fail); the release notes then say so.
 name: Android
 
 # Push runs also report their status on any open PR for the commit, so there's
 # no separate pull_request trigger (it would run the emulator job twice).
 on:
   push:
-    # The landing page (docs/index.html) doesn't affect the app; docs/web
-    # does (the e2e job hosts from it), so it still triggers.
-    paths-ignore: ['**.md', 'docs/index.html']
+    # The landing page and the published copy of the web app (docs/) don't
+    # affect the build: the jobs below build everything from source.
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
     inputs:
       release:
-        description: Commit the APKs to release/ and publish the GitHub Release
+        description: Publish the GitHub Release and the web app
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-${{ github.ref }}
@@ -48,6 +54,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.9'
@@ -56,6 +63,12 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test -j 1
+      - name: Build the web app
+        run: flutter build web --release --no-web-resources-cdn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: build/web/
       - name: Configure release signing (if secrets are set)
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -65,25 +78,40 @@ jobs:
         run: |
           if [ -z "$KEYSTORE_B64" ]; then
             echo "::warning::No release keystore secrets; signing with a throwaway debug key."
+            echo "SIGNING=debug" >> "$GITHUB_ENV"
             exit 0
           fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           {
+            echo "SIGNING=release"
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
             echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
             echo "KEY_ALIAS=$KEY_ALIAS"
             echo "KEY_PASSWORD=$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
-      - run: flutter build apk --release --split-per-abi --dart-define=AMPME_SYNC_LOG=true
-      - run: flutter build apk --release --dart-define=AMPME_SYNC_LOG=true
-      - name: Collect APKs
+      # The e2e job reads the app's per-second sync lines from logcat, so its
+      # APK (x86_64 only) is built with them on; the APKs people install are not.
+      - name: Build the e2e APK (sync log on)
         run: |
+          flutter build apk --release --split-per-abi --target-platform android-x64 \
+            --dart-define=AMPME_SYNC_LOG=true
           mkdir -p apks
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk apks/ampme-x86_64-e2e.apk
+      - name: Build the release APKs
+        run: |
+          flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apks/ampme-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk apks/ampme-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk apks/ampme-x86_64.apk
+          flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk apks/ampme.apk
+          echo "${SIGNING:-debug}" > apks/SIGNING
           ls -la apks
+      # What the Play Store takes; kept as a build artifact until a listing exists.
+      - run: flutter build appbundle --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aab
+          path: build/app/outputs/bundle/release/app-release.aab
       - uses: actions/upload-artifact@v4
         with:
           name: apks
@@ -124,8 +152,12 @@ jobs:
       - run: |
           command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
           bash tool/e2e/make_video.sh "$RUNNER_TEMP/clip.webm" 150
-      - name: Serve the committed web app
-        run: nohup python3 -m http.server 8080 --directory docs > "$RUNNER_TEMP/http.log" 2>&1 &
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: site/web
+      - name: Serve the web app built by this run
+        run: nohup python3 -m http.server 8080 --directory site > "$RUNNER_TEMP/http.log" 2>&1 &
       - name: Host a session from the web app (headless Chrome)
         working-directory: tool/e2e
         run: |
@@ -157,7 +189,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash tool/e2e/android_join.sh apks/ampme-x86_64.apk "$RUNNER_TEMP/ampme-code.txt" e2e-out
+          script: bash tool/e2e/android_join.sh apks/ampme-x86_64-e2e.apk "$RUNNER_TEMP/ampme-code.txt" e2e-out
       - name: Check the web host saw the APK playing in sync
         if: always()
         run: |
@@ -172,34 +204,71 @@ jobs:
           name: e2e-out-${{ matrix.mode }}
           path: e2e-out/
 
+  web-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.9'
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: flutter pub get
+      - name: Install Playwright + Chromium
+        working-directory: tool/e2e
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - run: command -v ffmpeg || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
+      - name: Run the browser scenarios
+        run: tool/e2e/web_e2e.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-e2e-out
+          path: |
+            build/e2e-work/out/
+            build/e2e-work/*.log
+
   release:
-    needs: [build, e2e]
+    needs: [build, e2e, web-e2e]
     if: >-
       (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-apks]')) ||
       (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pages: write
+    # A newer push must not cancel a release half way (the other jobs'
+    # concurrency group cancels superseded runs; this one never does).
+    concurrency:
+      group: android-release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: apks
           path: apks
-      - name: Commit the arm APKs to release/
-        run: |
-          cp apks/ampme-arm64-v8a.apk release/ampme-arm64-v8a.apk
-          cp apks/ampme-armeabi-v7a.apk release/ampme-armeabi-v7a.apk
-          # Commit as the account that pushed (not a bot), via its noreply address.
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-          git add release/
-          git commit -m "Update release APKs (CI run ${{ github.run_id }}) [skip ci]"
-          git push origin "HEAD:${{ github.ref_name }}"
-          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: web-build
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
+          SIGNING_NOTE=""
+          if [ "$(cat apks/SIGNING)" != release ]; then
+            echo "::warning::This release is signed with a throwaway debug key."
+            SIGNING_NOTE="> **Signed with a temporary key:** uninstall the previous version before installing this one; later releases will update in place."
+          fi
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
           **Ampme v$VERSION** — sessions that don't drop out.
 
@@ -209,6 +278,7 @@ jobs:
           - **The web app keeps the screen on** while hosting or listening; where the browser can't, it says to keep the tab open.
           - Fixes: a host reconnect could pause a listener's music; a fresh connection could jump a phone by seconds before its clock was synced.
 
+          $SIGNING_NOTE
           > **Everyone must update** — older versions can't play web-hosted sessions in sync. Updating from v1.0.0? Uninstall it first (it was signed with a different key, so Android won't install over it).
 
           ## Downloads
@@ -222,9 +292,31 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk --clobber
           else
-            gh release create "$TAG" --draft --target "$RELEASE_SHA" \
+            gh release create "$TAG" --draft --target "${{ github.sha }}" \
               --title "Ampme v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
               apks/ampme-arm64-v8a.apk apks/ampme-armeabi-v7a.apk apks/ampme.apk
           fi
           gh release edit "$TAG" --draft=false --latest
           gh release view "$TAG" --json tagName,isDraft,url,assets --jq '{tag: .tagName, draft: .isDraft, url, assets: [.assets[].name]}'
+      # The published web app is the one this run built and tested. Failing
+      # here must not undo the release above, so it only warns.
+      - name: Publish the web app (docs/web)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf docs/web
+          cp -r web-build docs/web
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git add -A docs/web
+          if git diff --cached --quiet; then
+            echo "docs/web is already current."
+            exit 0
+          fi
+          git commit -m "Publish the web app built by CI run ${{ github.run_id }} [skip ci]"
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          # Pushes made with the workflow token don't start a Pages build.
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null || \
+            echo "::warning::Could not request a Pages build; the site updates on the next push."
