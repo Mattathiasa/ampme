@@ -32,6 +32,10 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "ampme_session"
         private const val NOTIFICATION_ID = 3
 
+        /// A session longer than this lets the CPU sleep again: a lock that is
+        /// never released must not outlive a forgotten session for ever.
+        private const val MAX_LOCK_MS = 12L * 60 * 60 * 1000
+
         /// Set by [MainActivity]: tells Dart the user tapped Leave.
         @Volatile
         var onLeave: (() -> Unit)? = null
@@ -87,7 +91,7 @@ class SessionService : Service() {
             wakeLock =
                 power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ampme:session").apply {
                     setReferenceCounted(false)
-                    acquire()
+                    acquire(MAX_LOCK_MS)
                 }
         }
         if (wifiLock == null) {
@@ -105,6 +109,14 @@ class SessionService : Service() {
                     acquire()
                 }
         }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // The app was swiped away: the session lived in it and is gone, so
+        // don't keep a notification and the locks for nothing (the manifest's
+        // stopWithTask does the same; this makes it explicit).
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

@@ -110,6 +110,10 @@ final int _testChunkDelayMs =
 const Duration _connectTimeout = Duration(seconds: 12);
 const int _maxOfferRetries = 5;
 
+/// Most devices in one session, and most connecting at the same moment.
+const int _maxListeners = 40;
+const int _maxHandshakes = 10;
+
 class _Peer {
   _Peer(this.pc);
 
@@ -420,6 +424,10 @@ class WebHostController extends ChangeNotifier {
   /// [trackId] keeps a resumed session's song the same track for listeners
   /// (they still have it, and keep playing).
   Future<void> loadTrack(Uint8List bytes, String fileName, {String? trackId}) async {
+    // Two songs preparing at once would race for the same decoder, buffer
+    // and listeners; the second pick waits for the first to finish.
+    if (_loadingTrack) return;
+    _loadingTrack = true;
     errorMessage = null;
     if (isSharingTab) stopTabShare();
     try {
@@ -486,8 +494,12 @@ class WebHostController extends ChangeNotifier {
               '(is it a format this browser plays?): $e';
       reportError(e, st, context: 'webHost.loadTrack');
       _notify();
+    } finally {
+      _loadingTrack = false;
     }
   }
+
+  bool _loadingTrack = false;
 
   /// The file's sound as an AudioBuffer. The browser decodes most files
   /// itself; what it can't (Dolby/DTS sound, many MKVs) goes through
@@ -695,7 +707,9 @@ class WebHostController extends ChangeNotifier {
     int? anchorWallMs,
   }) async {
     while (_inFlightStart != null) {
-      await _inFlightStart;
+      try {
+        await _inFlightStart; // (its own caller handles its failure)
+      } catch (_) {}
     }
     final run = _doSynchronizedStart(startPosition, asSeek: asSeek, anchorWallMs: anchorWallMs);
     _inFlightStart = run;
@@ -1359,8 +1373,11 @@ class WebHostController extends ChangeNotifier {
         ..fileProgress = 1;
       _notify();
     } catch (e, st) {
-      peer.sendingTrackId = null;
       reportError(e, st, context: 'webHost.sendFile');
+    } finally {
+      // Left unfinished (the connection dropped, the song changed): a later
+      // send of the same song must not be taken for one still running.
+      if (peer.sentTrackId != track.trackId) peer.sendingTrackId = null;
     }
   }
 
@@ -1408,8 +1425,19 @@ class WebHostController extends ChangeNotifier {
   void _handleSignal(Map<String, dynamic> message) {
     switch (message['type']) {
       case 'listener-joined':
-        final id = message['id'] as String?;
-        if (id == null) return;
+        final id = message['id'];
+        if (id is! String || id.isEmpty || id.length > 100) return;
+        // Anyone who knows the code can say hello as often, and as many
+        // different "devices", as they like; each one costs a peer
+        // connection here. Bound both what is joined and what is mid-handshake.
+        if (!_listeners.containsKey(id)) {
+          final handshaking = _listeners.values.where((l) => l.phase == ListenerPhase.connecting).length;
+          if (_listeners.length >= _maxListeners || handshaking >= _maxHandshakes) {
+            // Not now: forget it, so the hello it repeats is tried afresh.
+            _signaling?.forgetListener(id);
+            return;
+          }
+        }
         _listeners[id] = WebListener(id, message['deviceName'] as String? ?? 'Unknown device');
         // A listener re-joining a resumed session still holds the song.
         _heldTracks[id] = message['hasTrackId'] as String?;
@@ -1541,6 +1569,9 @@ class WebHostController extends ChangeNotifier {
     } catch (e, st) {
       errorMessage = 'Listener connection failed: $e';
       reportError(e, st, context: 'webHost.connectPeer');
+      // No half-made peer, no "Connecting…" row that never ends: if the
+      // device announces itself again it gets a fresh try.
+      _dropListener(id);
       _notify();
     }
   }
@@ -1594,6 +1625,8 @@ class WebHostController extends ChangeNotifier {
 
   void _dropListener(String id) {
     _offerAttempts.remove(id);
+    // If the device announces itself again it is joined afresh.
+    _signaling?.forgetListener(id);
     _listenerFeatures.remove(id);
     final removed = _listeners.remove(id) != null;
     _closePeer(id);

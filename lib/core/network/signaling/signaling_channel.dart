@@ -35,6 +35,10 @@ abstract class SignalingChannel {
   /// id) and, for listeners, `from`.
   void send(Map<String, dynamic> message);
 
+  /// Host side: this listener's connection was dropped; if it announces
+  /// itself again, report it as newly joined (so it gets a fresh offer).
+  void forgetListener(String id);
+
   /// Closes the transport. Safe to call more than once.
   Future<void> close();
 }

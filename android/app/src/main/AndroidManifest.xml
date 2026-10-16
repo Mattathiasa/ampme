@@ -59,7 +59,8 @@
         <service
             android:name=".SessionService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="true" />
 
         <!-- Foreground service that captures system audio (other apps'
              output) via MediaProjection and streams it to the Flutter side.

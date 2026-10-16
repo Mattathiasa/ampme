@@ -182,6 +182,8 @@ class ControlClient implements ControlLink {
     _channel = null;
     unawaited(_subscription?.cancel());
     _subscription = null;
+    _syncTimer?.cancel(); // nothing to sync with until it is back
+    _syncTimer = null;
 
     // The connection never delivered a single frame (dead host, bad port) —
     // fail fast instead of retrying a session that never existed.
@@ -255,6 +257,9 @@ class ControlClient implements ControlLink {
   }
 
   void _scheduleNextSync(Duration delay) {
+    // One chain only: every reconnect starts a new one, and an old chain
+    // left running would keep waking the CPU (and outlive the session).
+    _syncTimer?.cancel();
     _syncTimer = Timer(delay, () {
       _sendSyncRequest();
       if (_syncBurstRemaining > 0) _syncBurstRemaining--;

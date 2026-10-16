@@ -151,6 +151,34 @@ void main() {
     await resumed.close();
   });
 
+  test('a listener the host dropped is joined afresh when it says hello again',
+      () async {
+    final hub = _FakeHub();
+    final host = _host(hub);
+    await host.connect();
+    final hostEvents = <Map<String, dynamic>>[];
+    host.messages.listen(hostEvents.add);
+    final listener = _listener(hub, 'L1');
+    await listener.connect();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    int joins() => hostEvents.where((m) => m['type'] == 'listener-joined').length;
+    expect(joins(), 1);
+
+    // Still known: its repeated hellos are answered, not re-announced.
+    listener.send({'type': 'hello', 'to': 'host', 'deviceName': 'Phone L1'});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(joins(), 1);
+
+    // The host dropped its connection: the next hello starts over.
+    host.forgetListener('L1');
+    listener.send({'type': 'hello', 'to': 'host', 'deviceName': 'Phone L1'});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(joins(), 2);
+
+    await listener.close();
+    await host.close();
+  });
+
   test('listener joining a code with no host fails with a clear error',
       () async {
     final hub = _FakeHub();

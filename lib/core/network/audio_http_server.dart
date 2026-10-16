@@ -166,7 +166,18 @@ class AudioHttpServer {
   Future<int> start() async {
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _server = server;
-    server.listen(_handleRequest);
+    server.listen((request) async {
+      try {
+        await _handleRequest(request);
+      } catch (_) {
+        // A player closing the connection mid-song (every seek does), a
+        // client that vanished, a bad upgrade: that request ends, the
+        // server and the session carry on.
+        try {
+          await request.response.close();
+        } catch (_) {}
+      }
+    });
     return server.port;
   }
 

@@ -19,6 +19,9 @@ class IncomingControlMessage {
 class ControlServer {
   final _sockets = <String, WebSocket>{};
   final _socketDeviceIds = <WebSocket, String>{};
+
+  /// Every connected socket, identified or not.
+  final _open = <WebSocket>{};
   final _controller = StreamController<IncomingControlMessage>.broadcast();
   final _disconnectController = StreamController<String>.broadcast();
 
@@ -30,7 +33,17 @@ class ControlServer {
 
   Set<String> get connectedDeviceIds => _sockets.keys.toSet();
 
+  /// Most listeners at once, and the largest control frame accepted: a
+  /// stranger on the network can open sockets and send frames too.
+  static const int maxConnections = 64;
+  static const int maxFrameChars = 64 * 1024;
+
   void handleConnection(WebSocket socket) {
+    if (_open.length >= maxConnections) {
+      unawaited(socket.close(WebSocketStatus.policyViolation, 'Too many listeners'));
+      return;
+    }
+    _open.add(socket);
     socket.listen(
       (data) => _handleData(socket, data),
       onDone: () => _handleDisconnect(socket),
@@ -40,7 +53,7 @@ class ControlServer {
   }
 
   void _handleData(WebSocket socket, dynamic data) {
-    if (data is! String) return;
+    if (data is! String || data.length > maxFrameChars) return;
 
     final ControlMessage message;
     try {
@@ -49,6 +62,11 @@ class ControlServer {
       return; // drop malformed frame rather than crashing the session
     }
 
+    // A connection keeps the identity it first claimed: it can't start
+    // speaking as another device. (A *new* connection claiming an id replaces
+    // the old one — that is how a reconnecting device takes its place back.)
+    final bound = _socketDeviceIds[socket];
+    if (bound != null && bound != message.senderId) return;
     _sockets[message.senderId] = socket;
     _socketDeviceIds[socket] = message.senderId;
     if (_controller.isClosed) return;
@@ -56,6 +74,7 @@ class ControlServer {
   }
 
   void _handleDisconnect(WebSocket socket) {
+    _open.remove(socket);
     _sockets.removeWhere((_, s) => s == socket);
     final deviceId = _socketDeviceIds.remove(socket);
     if (deviceId != null && !_disconnectController.isClosed) {
@@ -64,13 +83,22 @@ class ControlServer {
   }
 
   void sendTo(String deviceId, ControlMessage message) {
-    _sockets[deviceId]?.add(message.encode());
+    _send(_sockets[deviceId], message.encode());
   }
 
   void broadcast(ControlMessage message) {
     final data = message.encode();
-    for (final socket in _sockets.values) {
-      socket.add(data);
+    for (final socket in _sockets.values.toList()) {
+      _send(socket, data);
+    }
+  }
+
+  /// One dead socket must not stop the others from being told.
+  void _send(WebSocket? socket, String data) {
+    try {
+      socket?.add(data);
+    } catch (_) {
+      // Closing; its onDone/onError reports the disconnect.
     }
   }
 
@@ -80,6 +108,7 @@ class ControlServer {
     }
     _sockets.clear();
     _socketDeviceIds.clear();
+    _open.clear();
     await _controller.close();
     await _disconnectController.close();
   }

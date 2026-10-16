@@ -349,8 +349,11 @@ class JoinViewModel extends ChangeNotifier {
   void _keepAlive() {
     unawaited(() async {
       await AppPermissions.requestNotificationAccess();
+      // Left (or the host ended it) while the permission prompt was up.
+      final current = session;
+      if (current == null || current.hostLeft) return;
       await SessionKeepAlive.start(
-        title: 'Ampme · ${session?.sessionName ?? 'session'}',
+        title: 'Ampme · ${current.sessionName ?? 'session'}',
         text: 'Playing in sync — keeps going with the screen off.',
         onLeave: () => unawaited(leave()),
       );

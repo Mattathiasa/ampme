@@ -321,6 +321,11 @@ class CloudSignalingChannel implements SignalingChannel {
     if (to != null) _flushIce(to);
   }
 
+  @override
+  void forgetListener(String id) {
+    _knownListeners.remove(id);
+  }
+
   void _queueIce(String to, Map<String, dynamic> message) {
     (_pendingIce[to] ??= []).add({
       'candidate': message['candidate'],

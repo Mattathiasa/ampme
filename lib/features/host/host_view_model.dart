@@ -67,6 +67,7 @@ class HostViewModel extends ChangeNotifier {
       }
       await hostController.start(sessionName);
       systemAudioSupported = await hostController.isSystemAudioSupported();
+      if (_disposed) return; // left while it was starting
       // Keep the session (music, listeners' sync) going with the screen off.
       unawaited(SessionKeepAlive.start(
         title: 'Ampme · hosting $sessionName',
@@ -191,8 +192,16 @@ class HostViewModel extends ChangeNotifier {
 
   Future<void> setVolume(double volume) => hostController.setVolume(volume);
 
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     unawaited(SessionKeepAlive.stop());
     hostController.removeListener(notifyListeners);
     hostController.dispose();

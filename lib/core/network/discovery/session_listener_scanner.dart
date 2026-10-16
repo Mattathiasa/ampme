@@ -38,8 +38,12 @@ class SessionListenerScanner {
     final datagram = socket.receive();
     if (datagram == null) return;
 
-    final beacon = SessionBeacon.tryParse(utf8.decode(datagram.data));
+    // Anyone on the network can send a datagram: a real beacon is tiny, bytes
+    // that aren't text are not a beacon, and the list can't grow without end.
+    if (datagram.data.length > 2048) return;
+    final beacon = SessionBeacon.tryParse(utf8.decode(datagram.data, allowMalformed: true));
     if (beacon == null) return;
+    if (_sessions.length >= 64 && !_sessions.containsKey(beacon.hostDeviceId)) return;
 
     _sessions[beacon.hostDeviceId] = DiscoveredSession(
       beacon: beacon,

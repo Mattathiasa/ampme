@@ -83,6 +83,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
 
   /// The live capture being received (only the newest epoch is kept).
   int? _liveEpoch;
+  DateTime? _liveEpochAt;
   PcmRing? _liveRing;
   LiveSource? _liveSource;
 
@@ -176,6 +177,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       _connectProblem = true;
       _notify();
     });
+    if (_hostCanResume) _startReannounce();
     _droppedSub = signaling.disconnected.listen((_) {
       // Signaling only matters until the peer is up; afterwards everything
       // flows over the direct connection.
@@ -197,8 +199,13 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     }
   }
 
+  /// Counts offers: a newer one makes an older, still-running one stand down.
+  int _offerGeneration = 0;
+
   Future<void> _answerOffer(String sdp) async {
     if (sdp.isEmpty || _disposed) return;
+    final generation = ++_offerGeneration;
+    bool superseded() => generation != _offerGeneration || _disposed;
     try {
       // A fresh offer (host re-connecting us) replaces any previous peer.
       // Retire its link quietly first: closing the old control stream would
@@ -214,6 +221,10 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       final pc = await rtc.createPeerConnection(<String, dynamic>{
         'iceServers': iceServers(),
       });
+      if (superseded()) {
+        await pc.close(); // a newer offer is being answered
+        return;
+      }
       _pc = pc;
       _remoteDescriptionSet = false;
       pc.onIceCandidate = (candidate) {
@@ -249,6 +260,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       };
 
       await pc.setRemoteDescription(rtc.RTCSessionDescription(sdp, 'offer'));
+      if (superseded()) return; // (the newer offer's teardown closes this one)
       _remoteDescriptionSet = true;
       for (final candidate in _pendingCandidates) {
         try {
@@ -261,6 +273,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
 
       final answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      if (superseded()) return;
       _signaling?.send({'type': 'answer', 'to': 'host', 'sdp': answer.sdp});
     } catch (e, st) {
       reportError(e, st, context: 'answerWebRtcOffer');
@@ -336,6 +349,13 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   /// fresh connection ([_answerOffer]) — or give up after [_hostAwayGrace].
   void _waitForHost() {
     _disconnectTimer ??= Timer(_hostAwayGrace, _handleHostGone);
+    _startReannounce();
+  }
+
+  /// Says hello to the host every few seconds until a connection is up. The
+  /// host may not have been able to take us yet (a full room, a message lost
+  /// in the cloud) or may be a resumed page that has to find us again.
+  void _startReannounce() {
     _reannounceTimer ??= Timer.periodic(_reannounceInterval, (_) {
       final trackId = _session.currentTrack?.trackId;
       _signaling?.send({
@@ -370,9 +390,18 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   /// The ring for live capture [epoch]; a newer epoch replaces an older one,
   /// and frames of an older one are ignored.
   PcmRing? _liveRingFor(int epoch, int sampleRate) {
+    // The rate sizes the buffer (two minutes of it): only real audio rates.
+    if (sampleRate < 8000 || sampleRate > 192000) return null;
     final current = _liveEpoch;
     if (current != null && epoch < current) return null;
     if (current == epoch && _liveRing != null) return _liveRing;
+    // A new capture replaces the buffer; not many times a second.
+    final now = DateTime.now();
+    final last = _liveEpochAt;
+    if (current != null && last != null && now.difference(last) < const Duration(milliseconds: 500)) {
+      return null;
+    }
+    _liveEpochAt = now;
     _liveRing?.close();
     unawaited(_liveSource?.close());
     _liveSource = null;

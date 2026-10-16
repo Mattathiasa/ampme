@@ -16,7 +16,10 @@ class SessionKeepAlive {
 
   static const _channel = MethodChannel('com.ampme/session');
   static VoidCallback? _onLeave;
-  static bool _active = false;
+
+  /// Whether a session wants the service running right now. [start] takes a
+  /// moment (a native call); a [stop] that lands meanwhile must win.
+  static bool _wanted = false;
 
   static bool get _supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -34,17 +37,20 @@ class SessionKeepAlive {
       return;
     }
     if (!_supported) return;
+    _wanted = true;
     _onLeave = onLeave;
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'leave') _onLeave?.call();
     });
     try {
-      _active = await _channel.invokeMethod<bool>('start', {
-            'title': title,
-            'text': text,
-            'canLeave': onLeave != null,
-          }) ??
-          false;
+      await _channel.invokeMethod<bool>('start', {
+        'title': title,
+        'text': text,
+        'canLeave': onLeave != null,
+      });
+      // The session ended while the service was starting: don't leave it
+      // running (with its wake lock) for a session that no longer exists.
+      if (!_wanted) await _channel.invokeMethod<void>('stop');
     } catch (e, st) {
       reportError(e, st, context: 'SessionKeepAlive.start');
     }
@@ -52,13 +58,13 @@ class SessionKeepAlive {
 
   static Future<void> stop() async {
     _onLeave = null;
+    _wanted = false;
     if (kIsWeb) {
       releaseScreenWakeLock();
       screenMayDim = false;
       return;
     }
-    if (!_supported || !_active) return;
-    _active = false;
+    if (!_supported) return;
     try {
       await _channel.invokeMethod<void>('stop');
     } catch (e, st) {

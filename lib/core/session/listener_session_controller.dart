@@ -77,6 +77,9 @@ class ListenerSessionController extends ChangeNotifier
 
   ControlLink? _client;
 
+  /// The LAN host this listener joined (null for a browser-hosted session).
+  String? _hostIp;
+
   /// How far ahead of the target a drift-correction seek aims, learned from
   /// the error left after the previous correction: a seek in a compressed
   /// file (decoder restart from a keyframe) or on a slow device takes a
@@ -247,6 +250,7 @@ class ListenerSessionController extends ChangeNotifier
   }
 
   Future<void> connect({required String hostIp, required int controlPort}) async {
+    _hostIp = hostIp;
     final client = ControlClient(deviceId: selfDevice.deviceId);
     _client = client;
     await client.connect(hostIp: hostIp, controlPort: controlPort);
@@ -565,11 +569,14 @@ class ListenerSessionController extends ChangeNotifier
       return;
     }
     final streamUri = Uri.parse(track.streamUrl);
-    // LAN-only: refuse to load an audio stream from a non-private host, even
-    // if a malicious/buggy host broadcasts a track pointing elsewhere.
-    if (!isPrivateNetworkHost(streamUri.host)) {
+    // LAN-only, and only from the host we joined: refuse a stream from any
+    // other address, even if a malicious/buggy host broadcasts a track
+    // pointing at another device on the network.
+    final hostIp = _hostIp;
+    if (!isPrivateNetworkHost(streamUri.host) ||
+        (hostIp != null && streamUri.host != hostIp)) {
       reportError(
-        StateError('Refusing stream from non-private host ${streamUri.host}'),
+        StateError('Refusing stream from ${streamUri.host} (joined $hostIp)'),
         null,
         context: 'loadCurrentTrack',
       );
