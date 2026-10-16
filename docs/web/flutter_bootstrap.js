@@ -35,8 +35,7 @@ if (!window._flutter) {
 }
 _flutter.buildConfig = {"engineRevision":"5a2a6a42cce67f965cf540fcecf616faca624aa1","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"},{}],"useLocalCanvasKit":true};
 
-_flutter.loader.load({
-  serviceWorkerSettings: {
-    serviceWorkerVersion: "3883098312" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */
-  }
-});
+
+// No serviceWorkerSettings: Flutter's own (deprecated) worker would replace
+// Ampme's sw.js, registered from index.html, and then unregister itself.
+_flutter.loader.load();
