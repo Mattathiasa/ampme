@@ -50,3 +50,7 @@ release/ampme.apk
 
 # Playwright installed by the Android E2E workflow
 /tool/e2e/node_modules/
+
+# Browser e2e (tool/e2e/web_e2e.sh) output
+/tool/e2e/web/out/
+/tool/e2e/web/fixtures/
