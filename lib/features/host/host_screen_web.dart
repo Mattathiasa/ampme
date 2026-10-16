@@ -545,7 +545,20 @@ class _ListenerTile extends StatelessWidget {
         'Needs the latest Ampme app (or reload the web page) to play in sync',
         null,
       ),
+      ListenerPhase.unreachable => (
+        tokens.signal,
+        'Can’t connect directly — it’s probably on another network (mobile '
+            'data or a guest Wi-Fi). Put it on this Wi-Fi.',
+        null,
+      ),
       ListenerPhase.connecting => (null, 'Connecting…', null),
+      // Already playing the first part while the rest arrives.
+      ListenerPhase.receivingSong when hostPlaying && drift != null => (
+        drift.abs() <= 40 ? tokens.syncGood : tokens.syncWarn,
+        '${drift.abs() <= 40 ? 'In sync' : 'Catching up'} (${SyncRing.signed(drift)} ms)'
+            ' · song ${(listener.fileProgress * 100).round()}%',
+        listener.fileProgress,
+      ),
       ListenerPhase.receivingSong => (
         null,
         'Getting the song… ${(listener.fileProgress * 100).round()}%',
@@ -557,7 +570,9 @@ class _ListenerTile extends StatelessWidget {
             : (tokens.syncWarn, 'Catching up (${SyncRing.signed(drift)} ms)', null),
       ListenerPhase.ready => (null, 'Ready', null),
     };
-    final measuring = listener.phase == ListenerPhase.ready && hostPlaying;
+    final measuring = (listener.phase == ListenerPhase.ready ||
+            (listener.phase == ListenerPhase.receivingSong && drift != null)) &&
+        hostPlaying;
     return DeviceTile(
       name: listener.name,
       status: status,
@@ -568,6 +583,8 @@ class _ListenerTile extends StatelessWidget {
           ? SyncRing(driftMs: drift)
           : listener.phase == ListenerPhase.needsUpdate
           ? Icon(Icons.system_update_rounded, color: tokens.signal)
+          : listener.phase == ListenerPhase.unreachable
+          ? Icon(Icons.wifi_off_rounded, color: tokens.signal)
           : null,
     );
   }

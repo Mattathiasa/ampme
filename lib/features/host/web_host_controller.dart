@@ -79,7 +79,7 @@ extension type _RtcIceCandidate._(JSObject _) implements JSObject {
 }
 
 /// What the host screen shows for each connected device.
-enum ListenerPhase { connecting, receivingSong, ready, needsUpdate }
+enum ListenerPhase { connecting, receivingSong, ready, needsUpdate, unreachable }
 
 class WebListener {
   WebListener(this.id, this.name);
@@ -98,6 +98,11 @@ class WebListener {
   /// The device's measured clock-sync round trip (ms).
   int? roundTripMs;
 }
+
+/// Test only (page URL `?testChunkDelayMs=15`): slows song transfers, so
+/// e2e tests can watch a listener start while the song is still arriving.
+final int _testChunkDelayMs =
+    (int.tryParse(Uri.base.queryParameters['testChunkDelayMs'] ?? '') ?? 0).clamp(0, 100);
 
 /// Per-listener WebRTC state.
 /// How long a listener's connection may take to come up after an offer
@@ -125,6 +130,13 @@ class _Peer {
   /// Track whose bytes were fully queued to this listener / are being sent.
   String? sentTrackId;
   String? sendingTrackId;
+
+  /// Bytes of [sendingTrackId] queued so far.
+  int sentBytes = 0;
+
+  /// How many of those bytes are the file's end, sent ahead of the start
+  /// (0 for a listener that takes the file in order).
+  int tailBytes = 0;
 }
 
 /// Browser-side host for a web-hosted session.
@@ -531,6 +543,9 @@ class WebHostController extends ChangeNotifier {
   /// Track each re-joining listener says it already holds (skips re-sending).
   final Map<String, String?> _heldTracks = {};
 
+  /// Protocol features each listener announced in its hello.
+  final Map<String, Set<String>> _listenerFeatures = {};
+
   void _saveTimeline() {
     final track = currentTrack;
     if (!_resumable || track == null || track.isLive) return;
@@ -710,7 +725,7 @@ class WebHostController extends ChangeNotifier {
     // catch up (seek into place) as soon as their copy arrives.
     final waitingFor = [
       for (final entry in _peers.entries)
-        if (_isOpen(entry.value.control) && entry.value.sentTrackId == track.trackId)
+        if (_isOpen(entry.value.control) && _canStart(entry.value, track))
           entry.key,
     ];
     if (waitingFor.isNotEmpty) {
@@ -1292,25 +1307,42 @@ class WebHostController extends ChangeNotifier {
       ..fileProgress = 0;
     _notify();
     try {
+      // The file's end first, for listeners that can take it: players read
+      // it before starting (duration, tags, an MP4's index), so this lets
+      // them start on the first seconds.
+      final tailFirst =
+          _listenerFeatures[id]?.contains(FileTransferFrames.tailFirstFeature) ?? false;
+      final tailFrom = tailFirst ? tailFirstFrom(bytes, _fileMime) : bytes.length;
       channel.send(
         FileTransferFrames.start(
           trackId: track.trackId,
           size: bytes.length,
           mime: _fileMime,
           name: _fileSendName ?? track.fileName,
+          tailFrom: tailFrom < bytes.length ? tailFrom : null,
         )
             .toJS,
       );
       var sent = 0;
+      peer.sentBytes = 0;
+      peer.tailBytes = bytes.length - tailFrom;
       var lastNotified = 0.0;
-      for (final chunk in FileTransferFrames.chunks(bytes)) {
+      final order = [
+        if (tailFrom < bytes.length) Uint8List.sublistView(bytes, tailFrom),
+        Uint8List.sublistView(bytes, 0, tailFrom),
+      ];
+      for (final chunk in order.expand(FileTransferFrames.chunks)) {
         while (channel.bufferedAmount > _maxBufferedFileBytes) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
           if (!_stillSending(peer, track, channel)) return;
         }
         if (!_stillSending(peer, track, channel)) return;
+        if (_testChunkDelayMs > 0) {
+          await Future<void>.delayed(Duration(milliseconds: _testChunkDelayMs));
+        }
         channel.send(chunk.toJS);
         sent += chunk.length;
+        peer.sentBytes = sent;
         final progress = sent / bytes.length;
         if (listener != null && progress - lastNotified >= 0.02) {
           listener.fileProgress = progress;
@@ -1330,6 +1362,20 @@ class WebHostController extends ChangeNotifier {
       peer.sendingTrackId = null;
       reportError(e, st, context: 'webHost.sendFile');
     }
+  }
+
+  /// Whether [peer] has enough of [track] to start with everyone: all of
+  /// it, or (still receiving) its first ~20 s — listeners play a song while
+  /// the rest arrives.
+  bool _canStart(_Peer peer, TrackInfo track) {
+    if (peer.sentTrackId == track.trackId) return true;
+    final bytes = _fileBytes;
+    if (peer.sendingTrackId != track.trackId || bytes == null) return false;
+    // What the listener needs: the first ~20 s, plus the end of the file
+    // that tail-first listeners get sent before the start.
+    return peer.sentBytes >=
+        progressiveStartBytes(size: bytes.length, durationMs: track.durationMs) +
+            peer.tailBytes;
   }
 
   bool _stillSending(_Peer peer, TrackInfo track, web.RTCDataChannel channel) =>
@@ -1367,6 +1413,9 @@ class WebHostController extends ChangeNotifier {
         _listeners[id] = WebListener(id, message['deviceName'] as String? ?? 'Unknown device');
         // A listener re-joining a resumed session still holds the song.
         _heldTracks[id] = message['hasTrackId'] as String?;
+        _listenerFeatures[id] = {
+          for (final f in (message['features'] as List?) ?? const []) '$f',
+        };
         _notify();
         // A re-join (same id) replaces the old connection.
         _offerAttempts.remove(id);
@@ -1473,7 +1522,17 @@ class WebHostController extends ChangeNotifier {
         final attempts = _offerAttempts[id] = (_offerAttempts[id] ?? 0) + 1;
         if (attempts > _maxOfferRetries || !_listeners.containsKey(id)) {
           _offerAttempts.remove(id);
-          _dropListener(id);
+          final listener = _listeners[id];
+          if (listener == null) {
+            _dropListener(id);
+          } else {
+            // Signaling works but the two can't reach each other (mobile
+            // data, a guest Wi-Fi with client isolation): say so, rather
+            // than have the device vanish from the list.
+            _closePeer(id);
+            listener.phase = ListenerPhase.unreachable;
+            _notify();
+          }
           return;
         }
         _closePeer(id);
@@ -1535,6 +1594,7 @@ class WebHostController extends ChangeNotifier {
 
   void _dropListener(String id) {
     _offerAttempts.remove(id);
+    _listenerFeatures.remove(id);
     final removed = _listeners.remove(id) != null;
     _closePeer(id);
     if (removed) _notify();

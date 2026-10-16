@@ -274,6 +274,12 @@ class _JoinScreenBodyState extends State<_JoinScreenBody> {
       children: [
         if (session.isReconnecting)
           const AlertStrip(message: 'Connection lost — reconnecting…', busy: true),
+        if (session.connectProblem)
+          const AlertStrip(
+            message: 'Can’t connect to the host directly. You’re probably on a different '
+                'network (mobile data or a guest Wi-Fi). Join from the same Wi-Fi as the host.',
+            icon: Icons.wifi_off_rounded,
+          ),
         if (viewModel.routeNotice case final notice?)
           AlertStrip(message: notice, icon: Icons.speaker_rounded),
         if (SessionKeepAlive.screenMayDim)

@@ -106,6 +106,7 @@ class JoinViewModel extends ChangeNotifier {
           role: SignalingRole.listener,
           selfId: selfDevice.deviceId,
           deviceName: selfDevice.deviceName,
+          features: WebRtcListenerController.features,
         ),
       );
       return;

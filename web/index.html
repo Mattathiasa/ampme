@@ -104,6 +104,14 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // Installable app + streaming songs to listeners (see sw.js). Needs a
+    // secure page (HTTPS or localhost); on a plain-HTTP LAN relay the app
+    // simply runs without it.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    }
+  </script>
   <script src="flutter_bootstrap.js" async=""></script>
 
 

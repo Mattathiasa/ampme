@@ -46,8 +46,15 @@ class ListenerSessionController extends ChangeNotifier
     AudioEngine? audioEngine,
     this.trackResolver,
     CalibrationMic Function()? micFactory,
+    bool loadStartLead = true,
   })  : audioEngine = audioEngine ?? JustAudioEngine(),
-        _micFactory = micFactory ?? RecordCalibrationMic.new;
+        _micFactory = micFactory ?? RecordCalibrationMic.new {
+    if (loadStartLead) {
+      unawaited(StartLeadStore.load().then((ms) {
+        if (startLeadMs == 0) startLeadMs = ms;
+      }));
+    }
+  }
 
   final CalibrationMic Function() _micFactory;
   @override
@@ -87,6 +94,52 @@ class ListenerSessionController extends ChangeNotifier
     notifyListeners();
   }
   DateTime? _lastCorrectionAt;
+
+  /// How much earlier than the target instant this device calls play: the
+  /// time its player takes to actually start (browsers 60–90 ms, Android
+  /// players often more). Learned from the first reference after each start
+  /// and remembered ([StartLeadStore]), so the first second is already in
+  /// step instead of being trimmed or seeked into place.
+  int startLeadMs = 0;
+
+  /// When the last scheduled start was meant to sound; cleared once the
+  /// first reference after it has been measured.
+  DateTime? _startTarget;
+
+  /// Starts [position] playing at [at], called early by [startLeadMs].
+  Future<void> _scheduleStart(DateTime at, Duration position) async {
+    await audioEngine.scheduleStart(
+      at: at.subtract(Duration(milliseconds: startLeadMs)),
+      position: position,
+    );
+    _startTarget = at;
+  }
+
+  /// Learns [startLeadMs] from the first drift reading after a start.
+  void _learnStartLead(int drift, DateTime now) {
+    final target = _startTarget;
+    if (target == null) return;
+    final since = now.difference(target);
+    // Too soon: the player may still be spinning up. Too late, or a reading
+    // this wild: it isn't about the start (a stall, a seek, a bad clock).
+    if (since < const Duration(milliseconds: 500)) return;
+    _startTarget = null;
+    if (since > const Duration(seconds: 4) || drift.abs() >= 400) return;
+    // Behind (negative drift) means start earlier next time. Half the error
+    // per start: converges in a few songs without chasing noise.
+    final next = (startLeadMs - drift * 0.5).round().clamp(0, maxStartLeadMs);
+    if (next == startLeadMs) return;
+    startLeadMs = next;
+    unawaited(StartLeadStore.save(next));
+  }
+
+  /// Test hook: pretends the last start was meant to sound [age] earlier.
+  @visibleForTesting
+  void debugAgeStart(Duration age) {
+    final target = _startTarget;
+    if (target != null) _startTarget = target.subtract(age);
+  }
+
   /// Logs every sync reference (`--dart-define=AMPME_SYNC_LOG=true`), for
   /// diagnosing drift on real devices and in CI.
   static const bool _syncLog = bool.fromEnvironment('AMPME_SYNC_LOG');
@@ -136,6 +189,9 @@ class ListenerSessionController extends ChangeNotifier
   /// blip, host briefly backgrounded); the UI shows a "reconnecting" banner.
   @override
   bool isReconnecting = false;
+
+  @override
+  bool get connectProblem => false;
 
   /// A native-hosted session is a stream with a position unless it's a live
   /// mic broadcast.
@@ -269,7 +325,7 @@ class ListenerSessionController extends ChangeNotifier
     _wasPlayingBeforeDrop = false;
     if (track != null && wasPlaying && !track.isLive) {
       final startAt = DateTime.now().add(_scheduleLeadTime);
-      await audioEngine.scheduleStart(at: startAt, position: position);
+      await _scheduleStart(startAt, _hostPositionAt(startAt) ?? position);
     }
     _sendStatus();
   }
@@ -413,13 +469,22 @@ class ListenerSessionController extends ChangeNotifier
       // offset is exactly how a late joiner lands a second off.
       _client?.syncNow();
       await _waitForFreshSyncSamples();
-      final joinPosition =
+      final playing = playbackStateJson == 'playing' && !track.isLive;
+      if (playing) _lastHostReference = (positionMs: hostPositionMs, hostTimeMs: hostTimeMs);
+      Duration hostPositionIn(Duration lead) =>
           _estimateHostPositionNow(hostPositionMs, hostTimeMs) +
-              Duration(milliseconds: syncNudgeMs);
-      await _loadCurrentTrack(preBufferAt: joinPosition);
-      if (playbackStateJson == 'playing' && !track.isLive) {
+          lead +
+          Duration(milliseconds: syncNudgeMs);
+      // Pre-buffer near where the song will be once loaded (the first
+      // seconds arrive first; loading can take a while).
+      await _loadCurrentTrack(
+        preBufferAt: playing ? hostPositionIn(_scheduleLeadTime) : hostPositionIn(Duration.zero),
+      );
+      if (playing) {
+        // Where the host will be at the start instant — computed after the
+        // load, which can take seconds while the song arrives.
         final startAt = DateTime.now().add(_scheduleLeadTime);
-        await audioEngine.scheduleStart(at: startAt, position: joinPosition);
+        await _scheduleStart(startAt, hostPositionIn(_scheduleLeadTime));
       }
     }
     notifyListeners();
@@ -436,6 +501,16 @@ class ListenerSessionController extends ChangeNotifier
   /// Converts a host-reported (position, hostTimeMs) pair into this device's
   /// playhead position "right now", using the current clock offset estimate
   /// (offset == hostClock - clientClock).
+  /// Where the host's song will be at [at] (with this device's nudge), from
+  /// its latest reference; null before the first one.
+  Duration? _hostPositionAt(DateTime at) {
+    final ref = _lastHostReference;
+    if (ref == null) return null;
+    final offsetMs = _client?.clockEstimate?.offsetMs ?? 0;
+    final elapsed = at.millisecondsSinceEpoch - (ref.hostTimeMs - offsetMs);
+    return Duration(milliseconds: _nudged(ref.positionMs + (elapsed > 0 ? elapsed : 0)));
+  }
+
   Duration _estimateHostPositionNow(int hostPositionMs, int hostTimeMs) {
     final offsetMs = _client?.clockEstimate?.offsetMs ?? 0;
     // The same wall instant as [hostTimeMs], expressed on our clock.
@@ -556,10 +631,7 @@ class ListenerSessionController extends ChangeNotifier
       final pending = _pendingLoad;
       if (pending != null) await pending;
 
-      await audioEngine.scheduleStart(
-        at: localTarget,
-        position: Duration(milliseconds: _nudged(positionMs)),
-      );
+      await _scheduleStart(localTarget, Duration(milliseconds: _nudged(positionMs)));
     } catch (e, st) {
       reportError(e, st, context: 'schedulePlayback');
     }
@@ -617,11 +689,9 @@ class ListenerSessionController extends ChangeNotifier
     );
     if (!wasPlaying || !hostIsPlaying) return;
     final startAt = DateTime.now().add(_scheduleLeadTime);
-    await audioEngine.scheduleStart(
-      at: startAt,
-      position: Duration(
-        milliseconds: _nudged(hostPositionNow() + _scheduleLeadTime.inMilliseconds),
-      ),
+    await _scheduleStart(
+      startAt,
+      Duration(milliseconds: _nudged(hostPositionNow() + _scheduleLeadTime.inMilliseconds)),
     );
   }
 
@@ -741,11 +811,12 @@ class ListenerSessionController extends ChangeNotifier
     // stale values would make this loop chase up to ~250ms of fake drift.
     final estimate = audioEngine.estimatePositionAt(DateTime.now()).inMilliseconds;
     final drift = estimate - target;
+    _learnStartLead(drift, DateTime.now());
     void trace(String action) {
       if (!_syncLog) return;
       debugPrint('[sync] drift=$drift target=$target est=$estimate '
           'offset=$offsetMs rtt=${_client?.clockEstimate?.roundTripMs} '
-          'lead=$seekLeadMs nudge=$syncNudgeMs $action');
+          'lead=$seekLeadMs start=$startLeadMs nudge=$syncNudgeMs $action');
     }
     // The host re-broadcasts a measured reference every second. Start
     // trimming beyond [_trimStartMs]; once trimming, keep going until under

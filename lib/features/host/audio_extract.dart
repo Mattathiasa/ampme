@@ -6,7 +6,7 @@ import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
 
-import '../../core/audio/ogg_opus_writer.dart';
+import '../../core/audio/mp4_opus_writer.dart';
 import '../../core/audio/wav_writer.dart';
 import '../../core/observability/reporting.dart';
 
@@ -35,8 +35,10 @@ Future<ExtractedAudio> extractAudio(
 }) async {
   if (_hasAudioEncoder) {
     try {
-      final ogg = await _encodeOpus(buffer, onProgress: onProgress);
-      return ExtractedAudio(ogg, 'audio/ogg', 'ogg');
+      // MP4 with its index in front: listeners can start (and seek) on the
+      // first seconds while the rest is still arriving.
+      final mp4 = await _encodeOpus(buffer, onProgress: onProgress);
+      return ExtractedAudio(mp4, 'audio/mp4', 'm4a');
     } catch (e, st) {
       // Encoder present but unusable here: fall back to WAV (bigger, works).
       reportError(e, st, context: 'extractAudio.opus');
@@ -167,13 +169,13 @@ Future<Uint8List> _encodeOpus(
   }
 }
 
-/// Collects encoder output into an Ogg Opus file, taking the encoder's real
+/// Collects encoder output into an MP4 (Opus) file, taking the encoder's real
 /// look-ahead (pre-skip) from the OpusHead it reports when it does.
 class _OpusCollector {
   _OpusCollector(this.channels);
 
   final int channels;
-  OggOpusWriter? _writer;
+  Mp4OpusWriter? _writer;
   final List<(Uint8List, int)> _early = [];
 
   void add(JSObject chunkObj, JSObject? metadata) {
@@ -183,7 +185,7 @@ class _OpusCollector {
     final samples = ((chunk.duration ?? 20000) * 48 / 1000).round();
     var writer = _writer;
     if (writer == null) {
-      writer = _writer = OggOpusWriter(channels: channels, preSkip: _preSkip(metadata) ?? 312);
+      writer = _writer = Mp4OpusWriter(channels: channels, preSkip: _preSkip(metadata) ?? 312);
       for (final (b, s) in _early) {
         writer.addPacket(b, s);
       }
@@ -215,7 +217,7 @@ class _OpusCollector {
   }
 
   Uint8List finish({required int totalSamples48k}) =>
-      (_writer ?? OggOpusWriter(channels: channels)).finish(totalSamples48k: totalSamples48k);
+      (_writer ?? Mp4OpusWriter(channels: channels)).finish(totalSamples48k: totalSamples48k);
 }
 
 Future<web.AudioBuffer> _resample(web.AudioBuffer source, int rate) async {

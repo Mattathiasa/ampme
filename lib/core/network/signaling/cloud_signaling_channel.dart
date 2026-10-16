@@ -144,6 +144,7 @@ class CloudSignalingChannel implements SignalingChannel {
     required this.selfId,
     this.deviceName = '',
     this.sessionName = '',
+    this.features = const [],
     BroadcastTransport? transport,
     this.helloInterval = const Duration(milliseconds: 1500),
     this.findHostTimeout = const Duration(seconds: 8),
@@ -155,6 +156,10 @@ class CloudSignalingChannel implements SignalingChannel {
   final String selfId;
   final String deviceName;
   final String sessionName;
+
+  /// What this listener can do beyond the base protocol (sent in its hello,
+  /// handed to the host with `listener-joined`).
+  final List<String> features;
   final Duration helloInterval;
   final Duration findHostTimeout;
   final Duration iceBatchWindow;
@@ -201,6 +206,7 @@ class CloudSignalingChannel implements SignalingChannel {
       'from': selfId,
       'to': hostId,
       'deviceName': deviceName,
+      if (features.isNotEmpty) 'features': features,
     });
     hello();
     final helloTimer = Timer.periodic(helloInterval, (_) => hello());
@@ -242,6 +248,7 @@ class CloudSignalingChannel implements SignalingChannel {
               'id': from,
               'deviceName': message['deviceName'] ?? 'Unknown device',
               'hasTrackId': message['hasTrackId'],
+              'features': message['features'],
             });
           }
         case 'bye':

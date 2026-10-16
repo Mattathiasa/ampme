@@ -408,4 +408,66 @@ void main() {
       session.dispose();
     });
   }
+
+  test('a late start teaches the next start to begin earlier', () async {
+    final toListener = StreamController<String>();
+    final engine = _FakeEngine();
+    final session = ListenerSessionController(
+      selfDevice: const DeviceInfo(deviceId: 'p', deviceName: 'P', platform: 'web'),
+      audioEngine: engine,
+      trackResolver: (_) async => Uri.parse('blob:x'),
+      loadStartLead: false,
+    );
+    session.attach(_syncedLink(toListener));
+    const track = TrackInfo(trackId: 't', fileName: 'a.mp3', streamUrl: '', durationMs: 60000);
+    toListener.add(ControlMessage.trackChanged(senderId: 'host', track: track).encode());
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    Future<DateTime> start(int positionMs) async {
+      final at = DateTime.now().millisecondsSinceEpoch + 300;
+      toListener.add(ControlMessage.play(
+        senderId: 'host',
+        trackId: 't',
+        positionMs: positionMs,
+        startAtHostTimeMs: at,
+      ).encode());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      return DateTime.fromMillisecondsSinceEpoch(at);
+    }
+
+    void reference(int driftMs) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      engine.estimate = (_) => Duration(milliseconds: 10000 + driftMs);
+      toListener.add(ControlMessage.positionSync(
+        senderId: 'host',
+        trackId: 't',
+        positionMs: 10000,
+        hostTimeMs: now,
+      ).encode());
+    }
+
+    engine._state.add(PlaybackState.playing);
+    final first = await start(1000);
+    expect(engine.scheduled.last.at.difference(first).inMilliseconds.abs(), lessThan(15));
+
+    // Measured 80 ms behind on the first reference: start 40 ms earlier.
+    session.debugAgeStart(const Duration(seconds: 1));
+    reference(-80);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.startLeadMs, closeTo(40, 3));
+    // Only the first reference after a start counts.
+    reference(-80);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.startLeadMs, closeTo(40, 3));
+
+    final second = await start(2000);
+    expect(second.difference(engine.scheduled.last.at).inMilliseconds, closeTo(40, 15));
+
+    // A wild reading (a stall, not the start) teaches nothing.
+    session.debugAgeStart(const Duration(seconds: 1));
+    reference(-900);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.startLeadMs, closeTo(40, 3));
+    session.dispose();
+  });
 }

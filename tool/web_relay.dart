@@ -264,6 +264,7 @@ bool isNoCachePath(String path) {
   return name.endsWith('.html') ||
       name == 'flutter_bootstrap.js' ||
       name == 'flutter_service_worker.js' ||
+      name == 'sw.js' ||
       name == 'version.json' ||
       name == 'manifest.json';
 }

@@ -81,3 +81,31 @@ class SyncNudgeStore {
     }
   }
 }
+
+/// Most a start is called early (ms).
+const int maxStartLeadMs = 250;
+
+/// Remembers how long this device's player takes to actually start sounding
+/// after play (see `ListenerSessionController.startLeadMs`). It's a property
+/// of the device and its player, so one value per device.
+class StartLeadStore {
+  static const _key = 'ampme.startLeadMs';
+
+  static Future<int> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return (prefs.getInt(_key) ?? 0).clamp(0, maxStartLeadMs);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<void> save(int ms) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_key, ms);
+    } catch (_) {
+      // Not remembered; it's learned again next session.
+    }
+  }
+}

@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import '../../utils/user_activation.dart';
 import '../audio/audio_engine.dart';
 import '../audio/bytes_uri.dart';
+import '../audio/growing_source.dart';
 import '../audio/live_source.dart';
 import '../audio/pcm_ring.dart';
 import '../audio/remote_audio_sink.dart';
@@ -33,6 +34,10 @@ const Duration _disconnectGrace = Duration(seconds: 10);
 /// The host saves the session and offers to resume it; an explicit End
 /// still ends everyone at once.
 const Duration _hostAwayGrace = Duration(seconds: 90);
+
+/// How long a listener waits for the direct connection after the host
+/// answered before telling the user it can't connect.
+const Duration _connectGrace = Duration(seconds: 40);
 
 /// While the host is away, how often to tell the session we're still here,
 /// so a resumed host page finds us and re-connects us.
@@ -64,6 +69,10 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
 
   final DeviceInfo selfDevice;
 
+  /// Protocol features this listener announces to the host (see
+  /// `CloudSignalingChannel.features`).
+  static const features = [FileTransferFrames.tailFirstFeature];
+
   late final ListenerSessionController _session;
   final FileReceiver _files = FileReceiver(sinkFactory: defaultReceiveSinkFactory);
   StreamSubscription<double>? _progressSub;
@@ -85,6 +94,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   StreamController<String>? _controlFrames;
   Timer? _disconnectTimer;
   Timer? _reannounceTimer;
+  Timer? _connectWatch;
+  bool _connectProblem = false;
   bool _peerConnected = false;
   bool _disposed = false;
   bool _audioUnlocked = true;
@@ -125,6 +136,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   @override
   bool get isReconnecting => _session.isReconnecting;
   @override
+  bool get connectProblem => _connectProblem && !_peerConnected && !hostLeft;
+  @override
   int? get clockOffsetMs => _session.clockOffsetMs;
   @override
   int? get roundTripMs => _session.roundTripMs;
@@ -155,6 +168,14 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
       rethrow;
     }
     _signaledName = welcome['sessionName'] as String? ?? 'Web session';
+    // The host answered, so signaling works. If a direct connection still
+    // hasn't come up after this long, the two are most likely on different
+    // networks: say so instead of waiting for ever.
+    _connectWatch = Timer(_connectGrace, () {
+      if (_peerConnected || _disposed) return;
+      _connectProblem = true;
+      _notify();
+    });
     _droppedSub = signaling.disconnected.listen((_) {
       // Signaling only matters until the peer is up; afterwards everything
       // flows over the direct connection.
@@ -278,6 +299,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     switch (state) {
       case rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected:
         _peerConnected = true;
+        _connectWatch?.cancel();
+        _connectProblem = false;
         _disconnectTimer?.cancel();
         _disconnectTimer = null;
         _reannounceTimer?.cancel();
@@ -319,6 +342,7 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
         'type': 'hello',
         'to': 'host',
         'deviceName': selfDevice.deviceName,
+        'features': features,
         // We have the song already: the resumed host needn't send it again.
         'hasTrackId': ?(_uris.containsKey(trackId) ? trackId : null),
       });
@@ -368,18 +392,69 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     }
     final cached = _uris[track.trackId];
     if (cached != null) return cached;
+    final streamed = await _streamWhileArriving(track);
+    if (_disposed) return null;
+    if (streamed != null) {
+      _keepOnly(track.trackId, streamed.uri, streamed);
+      return streamed.uri;
+    }
     final file = await _files.waitFor(track.trackId);
     if (_disposed) return null;
     final uri = file.uri ??
         await bytesToUri(file.bytes!, name: track.fileName, mime: file.mime);
-    // One song at a time: free the previous one.
-    for (final old in _uris.values) {
-      releaseBytesUri(old);
+    _keepOnly(track.trackId, uri, null);
+    return uri;
+  }
+
+  /// Streams sources serving a song that may still be arriving.
+  final Map<String, GrowingSource> _sources = {};
+
+  /// One song at a time: frees every other one.
+  void _keepOnly(String trackId, Uri uri, GrowingSource? source) {
+    for (final entry in _uris.entries) {
+      if (entry.key == trackId) continue;
+      final old = _sources.remove(entry.key);
+      if (old != null) {
+        unawaited(old.close());
+      } else {
+        releaseBytesUri(entry.value);
+      }
     }
     _uris
-      ..clear()
-      ..[track.trackId] = uri;
-    return uri;
+      ..removeWhere((id, _) => id != trackId)
+      ..[trackId] = uri;
+    if (source != null) _sources[trackId] = source;
+  }
+
+  /// Starts on the first ~20 s of [track] instead of the whole file, when
+  /// its format allows and this platform can stream it; null otherwise (or
+  /// if the transfer already finished — then the plain file is simpler).
+  /// Only formats that seek straight to a byte qualify (WAV; MP4 with its
+  /// index — video sound is sent that way).
+  Future<GrowingSource?> _streamWhileArriving(TrackInfo track) async {
+    try {
+      final growing = await _files.waitForStart(track.trackId);
+      if (_disposed || growing.isComplete) return null;
+      final headBytes = growing.size < 64 * 1024 ? growing.size : 64 * 1024;
+      await growing.waitFor(headBytes);
+      final head = await growing.sink.read(0, headBytes);
+      final playable = isProgressivelyPlayable(
+        growing.mime,
+        head,
+        indexSentFirst: growing.tailFrom < growing.size,
+      );
+      if (growing.isComplete || !playable) return null;
+      // Any seek — a late start's catch-up, a drift correction, the host
+      // scrubbing — makes Ogg/MP3/FLAC/WebM players probe across the file
+      // and stall on bytes still on their way: stream only formats that
+      // seek straight to a byte.
+      if (!seeksDirectly(growing.mime)) return null;
+      await growing.waitUntilStartable(track.durationMs);
+      if (_disposed) return null;
+      return await openGrowingSource(growing);
+    } catch (_) {
+      return null; // transfer abandoned: the full-file path reports it
+    }
   }
 
   /// Starts audio the browser refused to autoplay. Must be called from a
@@ -431,6 +506,8 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
   }
 
   Future<void> _teardown() async {
+    _connectWatch?.cancel();
+    _connectWatch = null;
     _disconnectTimer?.cancel();
     _disconnectTimer = null;
     _reannounceTimer?.cancel();
@@ -452,11 +529,16 @@ class WebRtcListenerController extends ChangeNotifier implements ActiveSession {
     _session.removeListener(_notify);
     // Disposes the audio engine and the control link.
     _session.dispose();
-    _files.dispose();
-    for (final uri in _uris.values) {
-      releaseBytesUri(uri);
+    for (final entry in _uris.entries) {
+      final source = _sources.remove(entry.key);
+      if (source != null) {
+        unawaited(source.close());
+      } else {
+        releaseBytesUri(entry.value);
+      }
     }
     _uris.clear();
+    _files.dispose();
     _liveRing?.close();
     unawaited(_liveSource?.close());
     unawaited(_teardown());

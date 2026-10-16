@@ -36,6 +36,10 @@ abstract class ActiveSession extends ChangeNotifier {
   /// True while the control connection is being re-established.
   bool get isReconnecting;
 
+  /// The host answered but a direct connection never came up (typically
+  /// the two devices are on different networks).
+  bool get connectProblem;
+
   /// Host<->local clock offset estimate, once clock sync has run.
   int? get clockOffsetMs;
 
