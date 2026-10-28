@@ -67,7 +67,13 @@ void main() {
 
   // The ground truth is a real decoder: remux ffmpeg's own Opus packets and
   // have ffmpeg read, decode and seek the result.
-  final haveFfmpeg = Process.runSync('ffmpeg', ['-version']).exitCode == 0;
+  final haveFfmpeg = () {
+    try {
+      return Process.runSync('ffmpeg', ['-version']).exitCode == 0;
+    } on ProcessException {
+      return false; // not installed (CI's unit-test runner has none)
+    }
+  }();
   test('ffmpeg decodes and seeks the file', () {
     final dir = Directory.systemTemp.createTempSync('ampme_mp4_');
     addTearDown(() => dir.deleteSync(recursive: true));
