@@ -39,7 +39,7 @@ fi
 # video (its sound is what listeners get).
 F=$FIXTURES
 [ -f "$F/clicks.wav" ] || ffmpeg -hide_banner -loglevel error -y \
-  -f lavfi -i "aevalsrc='0.8*sin(2*PI*1000*t)*lt(mod(t\,0.5)\,0.01)':s=48000:c=mono:d=60" "$F/clicks.wav"
+  -f lavfi -i "aevalsrc='0.8*sin(2*PI*1000*t)*lt(mod(t\,0.5)\,0.01)':s=48000:c=mono:d=180" "$F/clicks.wav"
 [ -f "$F/tone240.wav" ] || python3 "$E2E/make_tone.py" "$F/tone240.wav" 240 440
 [ -f "$F/long.webm" ] || AUDIO_ONLY=1 bash "$E2E/make_video.sh" "$F/long.webm" 600
 
